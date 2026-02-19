@@ -34,19 +34,23 @@ def post_to_feishu(
     flow_field_description: str,
     flow_single_summary: bool,
 ) -> None:
+    paper_list = list(papers)
+
     if webhook_type == "flow":
         if flow_single_summary:
             payload = {
-                flow_field_title: "Daily paper summary",
-                flow_field_authors: _summarize_authors(papers),
-                flow_field_description: format_papers(papers),
+                flow_field_description: format_papers(paper_list),
             }
             response = requests.post(webhook_url, json=payload, timeout=20)
             response.raise_for_status()
+            print(
+                "[paper-notifier] Feishu flow post mode=single-summary "
+                f"field=({flow_field_description})"
+            )
             print(f"[paper-notifier] Feishu flow response: status={response.status_code} body={response.text[:200]}")
             return
 
-        for paper in papers:
+        for paper in paper_list:
             payload = {
                 flow_field_title: paper.title,
                 flow_field_authors: ", ".join(paper.authors),
@@ -55,12 +59,17 @@ def post_to_feishu(
             response = requests.post(webhook_url, json=payload, timeout=20)
             response.raise_for_status()
             print(f"[paper-notifier] Feishu flow response: status={response.status_code} body={response.text[:200]}")
+        print(
+            "[paper-notifier] Feishu flow post mode=per-paper "
+            f"fields=({flow_field_title}, {flow_field_authors}, {flow_field_description}) "
+            f"count={len(paper_list)}"
+        )
         return
 
     payload = {
         "msg_type": "text",
         "content": {
-            "text": format_papers(papers)
+            "text": format_papers(paper_list)
         },
     }
     response = requests.post(webhook_url, json=payload, timeout=20)

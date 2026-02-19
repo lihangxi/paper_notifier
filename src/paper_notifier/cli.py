@@ -102,7 +102,7 @@ def run_test_flow() -> None:
         FLOW_FIELD_TITLE,
         FLOW_FIELD_AUTHORS,
         FLOW_FIELD_DESCRIPTION,
-        False,
+        FLOW_SINGLE_SUMMARY,
     )
     print("[paper-notifier] flow test post completed")
 

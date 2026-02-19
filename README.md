@@ -1,6 +1,6 @@
 # Feishu Paper Notifier
 
-Daily bot that searches for new papers (arXiv + Crossref) and posts a summary to a Feishu group via webhook.
+Daily bot that searches for new papers (arXiv, Crossref, Semantic Scholar, and RSS feeds) and posts a summary to a Feishu webhook.
 
 ## Setup
 
@@ -14,6 +14,14 @@ pip install -e .
 
 3) Copy `.env.example` to `.env` and fill in your configuration values (especially `FEISHU_WEBHOOK_URL`).
 4) (Optional) Create a `keywords.txt` file to filter papers by author, title, or abstract patterns. Use sections `AUTHOR`, `TITLE`, `ABSTRACT` with regex or wildcard patterns (one per line).
+
+Recommended Feishu Flow config (single summary field):
+
+```dotenv
+FEISHU_WEBHOOK_TYPE=flow
+FLOW_SINGLE_SUMMARY=true
+FLOW_FIELD_DESCRIPTION=summary
+```
 
 **Note:** `.env`, `keywords.txt`, and `logs/` are user-specific and excluded from git (see `.gitignore`). They will not be committed to the repository.
 
@@ -31,7 +39,9 @@ Run on schedule (daily at configured time):
 python -m paper_notifier.cli --schedule
 ```
 
-Send one minimal Feishu Flow test payload (`title`, `author`, `abstract`):
+When schedule mode starts, the app prints scheduler status and the next run time.
+
+Send one Feishu Flow test payload using your configured flow mode/fields:
 
 ```bash
 python -m paper_notifier.cli --test-flow
@@ -52,4 +62,6 @@ python -m paper_notifier.cli --test-flow
 - To log matched papers, set `LOG_FILE` (defaults to `logs/matched_papers.log`).
 - To enable Semantic Scholar, set `SEMANTIC_SCHOLAR_API_KEY` (optional) and `SEMANTIC_SCHOLAR_LIMIT`.
 - To add journal feeds, set `RSS_FEEDS` as a comma-separated list of RSS URLs.
-- For Feishu Flow webhooks, set `FEISHU_WEBHOOK_TYPE=flow` and configure `FLOW_FIELD_TITLE`, `FLOW_FIELD_AUTHORS`, `FLOW_FIELD_DESCRIPTION`.
+- For Feishu Flow webhooks, set `FEISHU_WEBHOOK_TYPE=flow` and configure `FLOW_FIELD_DESCRIPTION`.
+- If `FLOW_SINGLE_SUMMARY=true`, only `FLOW_FIELD_DESCRIPTION` is used.
+- If `FLOW_SINGLE_SUMMARY=false`, `FLOW_FIELD_TITLE`, `FLOW_FIELD_AUTHORS`, and `FLOW_FIELD_DESCRIPTION` are all used (one payload per paper).
