@@ -1,0 +1,1 @@
+"""Feishu paper notifier."""
