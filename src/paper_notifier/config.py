@@ -26,6 +26,10 @@ LOG_FILE = os.getenv("LOG_FILE", "logs/matched_papers.log").strip()
 SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "").strip()
 SEMANTIC_SCHOLAR_LIMIT = parse_int(os.getenv("SEMANTIC_SCHOLAR_LIMIT"), 20)
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip() or "openrouter/free"
+OPENROUTER_TIMEOUT_SECONDS = parse_int(os.getenv("OPENROUTER_TIMEOUT_SECONDS"), 25)
+
 RSS_FEEDS = [
 	feed.strip()
 	for feed in os.getenv("RSS_FEEDS", "").split(",")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
 import requests
@@ -14,15 +15,81 @@ def format_papers(papers: Iterable[Paper]) -> str:
         authors = ", ".join(paper.authors[:5])
         if len(paper.authors) > 5:
             authors += ", et al."
-        lines.append("")
         if idx > 1:
-            lines.append("---")
+            lines.append("")
         lines.append(f"**{idx}) {paper.title}**")
         lines.append(f"**Authors:** {authors}")
         lines.append(f"**Source:** {paper.source} | **Date:** {paper.published.date()}")
         lines.append(f"**Abstract:** {paper.abstract}")
+        if paper.impact:
+            lines.append("**Impact:**")
+            for impact_line in _normalized_impact_lines(paper.impact):
+                lines.append(f"- {impact_line}")
         lines.append(f"**URL:** {paper.url}")
     return "\n".join(lines)
+
+
+def _normalized_impact_lines(impact: str) -> list[str]:
+    cleaned = impact.replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = re.sub(r"\*+", "", cleaned)
+    cleaned = re.sub(r"\bSocial/\s*", "Social or industry ", cleaned, flags=re.IGNORECASE)
+
+    scientific_match = re.search(
+        r"scientific\s+impact\s*:\s*(.+?)(?=(?:social(?:\s+or\s+industry)?\s+impact|societal\s+impact|industry\s+impact)\s*:|$)",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    social_match = re.search(
+        r"(?:social(?:\s+or\s+industry)?\s+impact|societal\s+impact|industry\s+impact)\s*:\s*(.+)$",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    def compact(text: str) -> str:
+        return " ".join(text.split())
+
+    if scientific_match or social_match:
+        scientific_text = compact(scientific_match.group(1)) if scientific_match else ""
+        social_text = compact(social_match.group(1)) if social_match else ""
+        if not scientific_text:
+            scientific_text = "Provides a potentially useful technical contribution that merits further validation."
+        if not social_text:
+            social_text = "May have downstream practical relevance if the findings are validated and adopted."
+        result = []
+        if scientific_text:
+            result.append(f"Scientific impact: {scientific_text}")
+        if social_text:
+            result.append(f"Social or industry impact: {social_text}")
+        return result
+
+    raw_lines = []
+    for raw_line in cleaned.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^[-•]\s*", "", line)
+        if line:
+            raw_lines.append(compact(line))
+
+    if len(raw_lines) >= 2:
+        return [
+            f"Scientific impact: {raw_lines[0]}",
+            f"Social or industry impact: {raw_lines[1]}",
+        ]
+    if len(raw_lines) == 1:
+        return [
+            f"Scientific impact: {raw_lines[0]}",
+            "Social or industry impact: May have downstream practical relevance if the findings are validated and adopted.",
+        ]
+    return []
+
+
+def _paper_description_with_impact(paper: Paper) -> str:
+    description = paper.abstract
+    if paper.impact:
+        impact_text = "\n".join(f"- {line}" for line in _normalized_impact_lines(paper.impact))
+        description = f"{description}\n\nImpact:\n{impact_text}"
+    return description
 
 
 def post_to_feishu(
@@ -54,7 +121,7 @@ def post_to_feishu(
             payload = {
                 flow_field_title: paper.title,
                 flow_field_authors: ", ".join(paper.authors),
-                flow_field_description: paper.abstract,
+                flow_field_description: _paper_description_with_impact(paper),
             }
             response = requests.post(webhook_url, json=payload, timeout=20)
             response.raise_for_status()

@@ -14,6 +14,15 @@ pip install -e .
 
 3) Copy `.env.example` to `.env` and fill in your configuration values (especially `FEISHU_WEBHOOK_URL`).
 4) (Optional) Create a `keywords.txt` file to filter papers by author, title, or abstract patterns. Use sections `AUTHOR`, `TITLE`, `ABSTRACT` with regex or wildcard patterns (one per line).
+5) (Optional) Set `OPENROUTER_API_KEY` to generate social/scientific impact explanations for each paper using `openrouter/free`.
+
+OpenRouter-related options:
+
+```dotenv
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=openrouter/free
+OPENROUTER_TIMEOUT_SECONDS=25
+```
 
 Recommended Feishu Flow config (single summary field):
 
@@ -65,3 +74,10 @@ python -m paper_notifier.cli --test-flow
 - For Feishu Flow webhooks, set `FEISHU_WEBHOOK_TYPE=flow` and configure `FLOW_FIELD_DESCRIPTION`.
 - If `FLOW_SINGLE_SUMMARY=true`, only `FLOW_FIELD_DESCRIPTION` is used.
 - If `FLOW_SINGLE_SUMMARY=false`, `FLOW_FIELD_TITLE`, `FLOW_FIELD_AUTHORS`, and `FLOW_FIELD_DESCRIPTION` are all used (one payload per paper).
+- If `OPENROUTER_API_KEY` is configured, each paper includes an LLM-generated impact note using title, authors, abstract, and paper URL.
+- Impact output is normalized to two lines for consistent formatting:
+	- `Scientific impact: ...`
+	- `Social or industry impact: ...`
+- If one impact line is missing from LLM output, the notifier auto-fills a concise fallback line to keep both categories present.
+- Abstract text is cleaned to remove common metadata prefixes (for example `Published online` and leading DOI strings).
+- On OpenRouter API failure or missing key, the notifier falls back to heuristic impact text.
