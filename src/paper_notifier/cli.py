@@ -90,7 +90,7 @@ def run_test_flow() -> None:
         title="paper test",
         authors=["paper-notifier"],
         abstract="abstract test",
-        impact="",
+        summary="",
         url="https://example.com/paper-test",
         source="paper-notifier",
         published=datetime.now(timezone.utc),

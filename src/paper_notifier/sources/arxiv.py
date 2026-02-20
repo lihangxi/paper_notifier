@@ -30,7 +30,7 @@ def fetch_arxiv(query: str, max_results: int, days_back: int) -> List[Paper]:
                 title=entry.title.replace("\n", " ").strip(),
                 authors=authors,
                 abstract=entry.summary or "",
-                impact="",
+                summary="",
                 url=entry.link,
                 source="arXiv",
                 published=published,

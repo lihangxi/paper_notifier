@@ -65,98 +65,89 @@ def extract_abstract(text: str, limit: int = 380) -> str:
     return cleaned[: limit - 3].rstrip() + "..."
 
 
-def estimate_impact(title: str, venue: str) -> str:
+def _heuristic_impact_sentence(title: str, venue: str) -> str:
     title_lower = title.lower()
     venue_lower = venue.lower()
     if any(key in venue_lower for key in ["nature", "science", "cell", "prl", "physical review letters"]):
-        return "High visibility venue; likely broad impact."
+        return "Impact: If validated, this work could influence a broad range of follow-up research due to its high-visibility venue."
     if "quantum" in title_lower or "qubit" in title_lower:
-        return "Relevant to quantum computing; check novelty and benchmarks."
-    return "Potentially relevant; review methods and results."
+        return "Impact: If results hold, this paper could guide near-term progress in quantum computing methods and benchmarks."
+    return "Impact: If validated and reproducible, this work could provide a practical foundation for future research and applications."
 
 
-def normalize_impact_text(text: str) -> str:
+def _fetch_url_context(url: str, timeout: int = 10) -> str:
+    if not url:
+        return ""
+    try:
+        response = requests.get(
+            url,
+            timeout=timeout,
+            headers={"User-Agent": "paper-notifier/1.0"},
+            allow_redirects=True,
+        )
+        response.raise_for_status()
+    except Exception:
+        return ""
+
+    content_type = (response.headers.get("Content-Type") or "").lower()
+    body = response.text if "text" in content_type or "html" in content_type else ""
+    if not body:
+        return ""
+
+    body = re.sub(r"<script[^>]*>.*?</script>", " ", body, flags=re.IGNORECASE | re.DOTALL)
+    body = re.sub(r"<style[^>]*>.*?</style>", " ", body, flags=re.IGNORECASE | re.DOTALL)
+    body = re.sub(r"<[^>]+>", " ", body)
+    body = html.unescape(body)
+    body = _collapse_whitespace(body)
+    if len(body) > 2200:
+        return body[:2200]
+    return body
+
+
+def _normalize_summary_text(text: str) -> str:
     cleaned = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     cleaned = re.sub(r"\*+", "", cleaned)
-    cleaned = re.sub(r"\s*\(?\s*word\s*count\s*:\s*\d+\s*\)?\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"^\s*based\s+on\s+(the\s+)?paper\s*metadata\s*:\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\bpapermetadata\b", "paper metadata", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\n{2,}", "\n", cleaned).strip()
-
-    sci_match = re.search(
-        r"scientific\s+impact\s*:\s*(.+?)(?=(?:social(?:\s+or\s+industry)?\s+impact|societal\s+impact|industry\s+impact)\s*:|$)",
-        cleaned,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    social_match = re.search(
-        r"(?:social(?:\s+or\s+industry)?\s+impact|societal\s+impact|industry\s+impact)\s*:\s*(.+)$",
-        cleaned,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-
-    lines: list[str] = []
-    scientific_text = ""
-    social_text = ""
-    if sci_match:
-        scientific_text = _collapse_whitespace(sci_match.group(1))
-    if social_match:
-        social_text = _collapse_whitespace(social_match.group(1))
-
-    if scientific_text or social_text:
-        if not scientific_text:
-            scientific_text = "Provides a potentially useful technical contribution that merits further validation."
-        if not social_text:
-            social_text = "May have downstream practical relevance if the findings are validated and adopted."
-        lines.append(f"Scientific impact: {scientific_text}")
-        lines.append(f"Social or industry impact: {social_text}")
-
-    if not lines:
-        for raw_line in cleaned.split("\n"):
-            line = re.sub(r"^\s*[-•]\s*", "", raw_line).strip()
-            if not line:
-                continue
-            lines.append(_collapse_whitespace(line))
-            if len(lines) >= 2:
-                break
-
-    if lines and not lines[0].lower().startswith("scientific impact:"):
-        lines[0] = f"Scientific impact: {lines[0]}"
-
-    if len(lines) >= 2 and not lines[1].lower().startswith("social or industry impact:"):
-        lines[1] = f"Social or industry impact: {lines[1]}"
-
-    if len(lines) == 1:
-        if lines[0].lower().startswith("scientific impact:"):
-            lines.append(
-                "Social or industry impact: May have downstream practical relevance if the findings are validated and adopted."
-            )
-        else:
-            lines.insert(
-                0,
-                "Scientific impact: Provides a potentially useful technical contribution that merits further validation.",
-            )
-
-    if not lines:
-        return ""
-    return "\n".join(lines[:2])
+    cleaned = re.sub(r"^\s*summary\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\n{2,}", "\n", cleaned)
+    lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
+    return "\n".join(lines).strip()
 
 
-def explain_impact_with_openrouter(paper: Paper) -> str:
+def _ensure_impact_sentence(summary: str, title: str, venue: str) -> str:
+    compact = _collapse_whitespace(summary)
+    if not compact:
+        return _heuristic_impact_sentence(title, venue)
+
+    impact_match = re.search(r"(?:^|\s)(Impact\s*:\s*[^\n]+)$", compact, flags=re.IGNORECASE)
+    if impact_match:
+        impact_sentence = impact_match.group(1).strip()
+        body = compact[: impact_match.start(1)].strip()
+        if body:
+            return f"{body} {impact_sentence}"
+        return impact_sentence
+
+    if compact.endswith("."):
+        return f"{compact} {_heuristic_impact_sentence(title, venue)}"
+    return f"{compact}. {_heuristic_impact_sentence(title, venue)}"
+
+
+def summarize_with_openrouter(paper: Paper, url_context: str) -> str:
     if not OPENROUTER_API_KEY:
         return ""
 
     author_text = ", ".join(paper.authors[:8]) if paper.authors else "Unknown authors"
+    context_block = f"\nURL content excerpt: {url_context}\n" if url_context else "\nURL content excerpt: (not accessible)\n"
     prompt = (
-        "You are helping a research digest. Based on the paper metadata, "
-        "write exactly two lines: "
-        "(1) Scientific impact: ... and (2) Social or industry impact: ... "
-        "Keep total length under 90 words, avoid hype, avoid markdown headers, "
-        "and do not include word-count text. "
-        "If the URL is accessible and contains open content, use it to improve accuracy.\n\n"
+        "You are helping a research digest. Write one concise summary paragraph (40-70 words) "
+        "using the abstract and any accessible URL content excerpt below. "
+        "The summary must end with exactly one sentence that starts with 'Impact:' and states likely impact. "
+        "Do not use markdown bullets or headings. Avoid hype and uncertainty inflation.\n\n"
         f"Title: {paper.title}\n"
         f"Authors: {author_text}\n"
+        f"Venue: {paper.source}\n"
         f"Abstract: {paper.abstract}\n"
         f"URL: {paper.url}"
+        f"{context_block}"
     )
 
     payload = {
@@ -178,18 +169,28 @@ def explain_impact_with_openrouter(paper: Paper) -> str:
         body = response.json()
         message = body.get("choices", [{}])[0].get("message", {})
         content = (message.get("content") or "").strip()
-        return normalize_impact_text(content)
+        return _normalize_summary_text(content)
     except Exception as exc:
-        print(f"[paper-notifier] OpenRouter impact generation failed: {exc}")
+        print(f"[paper-notifier] OpenRouter summary generation failed: {exc}")
         return ""
+
+
+def _fallback_summary(paper: Paper) -> str:
+    abstract = _collapse_whitespace(paper.abstract)
+    if not abstract:
+        abstract = "No abstract is available in metadata."
+    return _ensure_impact_sentence(abstract, paper.title, paper.source)
 
 
 def summarize_papers(papers: List[Paper]) -> List[Paper]:
     summarized = []
     for paper in papers:
         paper.abstract = extract_abstract(paper.abstract)
-        if not paper.impact:
-            paper.impact = explain_impact_with_openrouter(paper) or estimate_impact(paper.title, paper.source)
+        url_context = _fetch_url_context(paper.url)
+        generated_summary = summarize_with_openrouter(paper, url_context)
+        paper.summary = _ensure_impact_sentence(generated_summary, paper.title, paper.source)
+        if not paper.summary:
+            paper.summary = _fallback_summary(paper)
         summarized.append(paper)
     return summarized
 

@@ -14,6 +14,9 @@ MAX_PAPERS = parse_int(os.getenv("MAX_PAPERS"), 8)
 DAYS_BACK = parse_int(os.getenv("DAYS_BACK"), 1)
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Shanghai").strip()
 RUN_TIME = os.getenv("RUN_TIME", "09:00").strip()
+SCHEDULER_MISFIRE_GRACE_SECONDS = parse_int(
+	os.getenv("SCHEDULER_MISFIRE_GRACE_SECONDS"), 60
+)
 CROSSREF_MAILTO = os.getenv("CROSSREF_MAILTO", "").strip()
 CROSSREF_ROWS = parse_int(os.getenv("CROSSREF_ROWS"), 5)
 KEY_AUTHORS = [
@@ -38,5 +41,5 @@ RSS_FEEDS = [
 FEISHU_WEBHOOK_TYPE = os.getenv("FEISHU_WEBHOOK_TYPE", "bot").strip().lower()
 FLOW_FIELD_TITLE = os.getenv("FLOW_FIELD_TITLE", "paper_title").strip() or "paper_title"
 FLOW_FIELD_AUTHORS = os.getenv("FLOW_FIELD_AUTHORS", "authors").strip() or "authors"
-FLOW_FIELD_DESCRIPTION = os.getenv("FLOW_FIELD_DESCRIPTION", "description").strip() or "description"
+FLOW_FIELD_DESCRIPTION = os.getenv("FLOW_FIELD_DESCRIPTION", "summary").strip() or "summary"
 FLOW_SINGLE_SUMMARY = parse_bool(os.getenv("FLOW_SINGLE_SUMMARY"), True)

@@ -65,7 +65,7 @@ def fetch_semantic_scholar(
                 title=(item.get("title") or "").strip(),
                 authors=authors or ["Unknown"],
                 abstract=item.get("abstract") or "",
-                impact="",
+                summary="",
                 url=item.get("url") or "",
                 source=item.get("venue") or "Semantic Scholar",
                 published=published,

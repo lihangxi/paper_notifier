@@ -50,7 +50,7 @@ def fetch_crossref(query: str, rows: int, days_back: int, mailto: str) -> List[P
                 title=title,
                 authors=authors or ["Unknown"],
                 abstract=abstract or "No abstract provided.",
-                impact="",
+                summary="",
                 url=url,
                 source=venue,
                 published=published,

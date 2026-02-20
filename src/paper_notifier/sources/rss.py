@@ -35,7 +35,7 @@ def fetch_rss(feeds: Iterable[str], days_back: int) -> List[Paper]:
                     title=title,
                     authors=authors or ["Unknown"],
                     abstract=summary,
-                    impact="",
+                    summary="",
                     url=url,
                     source=source_name,
                     published=published,

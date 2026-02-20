@@ -14,7 +14,7 @@ pip install -e .
 
 3) Copy `.env.example` to `.env` and fill in your configuration values (especially `FEISHU_WEBHOOK_URL`).
 4) (Optional) Create a `keywords.txt` file to filter papers by author, title, or abstract patterns. Use sections `AUTHOR`, `TITLE`, `ABSTRACT` with regex or wildcard patterns (one per line).
-5) (Optional) Set `OPENROUTER_API_KEY` to generate social/scientific impact explanations for each paper using `openrouter/free`.
+5) (Optional) Set `OPENROUTER_API_KEY` to generate an LLM summary for each paper (using abstract + accessible URL content), with a one-sentence impact line at the end.
 
 OpenRouter-related options:
 
@@ -71,13 +71,12 @@ python -m paper_notifier.cli --test-flow
 - To log matched papers, set `LOG_FILE` (defaults to `logs/matched_papers.log`).
 - To enable Semantic Scholar, set `SEMANTIC_SCHOLAR_API_KEY` (optional) and `SEMANTIC_SCHOLAR_LIMIT`.
 - To add journal feeds, set `RSS_FEEDS` as a comma-separated list of RSS URLs.
+- If you see occasional APScheduler "run time ... was missed" warnings near startup, increase `SCHEDULER_MISFIRE_GRACE_SECONDS` (default `60`).
 - For Feishu Flow webhooks, set `FEISHU_WEBHOOK_TYPE=flow` and configure `FLOW_FIELD_DESCRIPTION`.
 - If `FLOW_SINGLE_SUMMARY=true`, only `FLOW_FIELD_DESCRIPTION` is used.
 - If `FLOW_SINGLE_SUMMARY=false`, `FLOW_FIELD_TITLE`, `FLOW_FIELD_AUTHORS`, and `FLOW_FIELD_DESCRIPTION` are all used (one payload per paper).
-- If `OPENROUTER_API_KEY` is configured, each paper includes an LLM-generated impact note using title, authors, abstract, and paper URL.
-- Impact output is normalized to two lines for consistent formatting:
-	- `Scientific impact: ...`
-	- `Social or industry impact: ...`
-- If one impact line is missing from LLM output, the notifier auto-fills a concise fallback line to keep both categories present.
+- If `OPENROUTER_API_KEY` is configured, each paper includes an LLM-generated summary using title, authors, abstract, and URL content when accessible.
+- Feishu messages now use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries).
+- The summary ends with exactly one sentence prefixed with `Impact:`.
 - Abstract text is cleaned to remove common metadata prefixes (for example `Published online` and leading DOI strings).
-- On OpenRouter API failure or missing key, the notifier falls back to heuristic impact text.
+- On OpenRouter API failure or missing key, the notifier falls back to abstract-based summary plus a heuristic impact sentence.

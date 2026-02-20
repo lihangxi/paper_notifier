@@ -8,7 +8,7 @@ class Paper:
     title: str
     authors: List[str]
     abstract: str
-    impact: str
+    summary: str
     url: str
     source: str
     published: datetime
