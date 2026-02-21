@@ -35,7 +35,36 @@ from .summarize import summarize_papers
 from .utils import utc_now
 
 
-def run_once() -> None:
+def load_logged_paper_urls(log_file: str) -> set[str]:
+    if not log_file:
+        return set()
+
+    path = Path(log_file)
+    if not path.exists():
+        return set()
+
+    urls: set[str] = set()
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line.startswith("- "):
+                continue
+            parts = line.split(" | ")
+            if len(parts) < 5:
+                continue
+            url = parts[-1].strip()
+            if url:
+                urls.add(url)
+    return urls
+
+
+def filter_previously_sent_papers(papers: list[Paper], logged_urls: set[str]) -> list[Paper]:
+    if not logged_urls:
+        return papers
+    return [paper for paper in papers if paper.url not in logged_urls]
+
+
+def run_once(include_sent_papers: bool = False) -> None:
     print(f"[paper-notifier] run started at {utc_now().isoformat()}")
     if not FEISHU_WEBHOOK_URL:
         raise SystemExit("FEISHU_WEBHOOK_URL is required")
@@ -55,6 +84,18 @@ def run_once() -> None:
             f"[paper-notifier] papers after keywords filter ({KEYWORDS_FILE}, {keyword_rules.keyword_count} keywords): "
             f"{len(papers)} / {before_keywords}"
         )
+
+    if include_sent_papers:
+        print("[paper-notifier] sent-paper filter bypassed via --include-sent-papers")
+    else:
+        logged_urls = load_logged_paper_urls(LOG_FILE)
+        if logged_urls:
+            before_log_filter = len(papers)
+            papers = filter_previously_sent_papers(papers, logged_urls)
+            print(
+                f"[paper-notifier] papers after sent-paper log filter ({LOG_FILE}): "
+                f"{len(papers)} / {before_log_filter}"
+            )
 
     if KEY_AUTHORS:
         papers = [paper for paper in papers if matches_key_authors(paper.authors)]
@@ -144,14 +185,19 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="run once and exit")
     parser.add_argument("--schedule", action="store_true", help="run daily on schedule")
     parser.add_argument("--test-flow", action="store_true", help="send one minimal flow payload and exit")
+    parser.add_argument(
+        "--include-sent-papers",
+        action="store_true",
+        help="bypass matched_papers.log dedup filter and include papers sent before",
+    )
     args = parser.parse_args()
 
     if args.test_flow:
         run_test_flow()
     elif args.schedule:
-        schedule_daily(run_once)
+        schedule_daily(lambda: run_once(include_sent_papers=args.include_sent_papers))
     else:
-        run_once()
+        run_once(include_sent_papers=args.include_sent_papers)
 
 
 if __name__ == "__main__":

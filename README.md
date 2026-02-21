@@ -42,6 +42,12 @@ Run once:
 python -m paper_notifier.cli --once
 ```
 
+Run once and include papers that were already logged in `logs/matched_papers.log`:
+
+```bash
+python -m paper_notifier.cli --once --include-sent-papers
+```
+
 Run on schedule (daily at configured time):
 
 ```bash
