@@ -23,7 +23,7 @@ from .config import (
     SEMANTIC_SCHOLAR_API_KEY,
     SEMANTIC_SCHOLAR_LIMIT,
 )
-from .feishu import post_to_feishu
+from .feishu import post_no_match_to_feishu, post_to_feishu
 from .keywords import filter_papers_by_keywords, load_keyword_rules
 from .models import Paper
 from .scheduler import schedule_daily
@@ -102,7 +102,15 @@ def run_once(include_sent_papers: bool = False) -> None:
         print(f"[paper-notifier] papers after KEY_AUTHORS filter: {len(papers)}")
 
     if not papers:
-        print("[paper-notifier] no papers matched; skipping Feishu webhook")
+        print("[paper-notifier] no papers matched; sending no-match notification to Feishu")
+        post_no_match_to_feishu(
+            FEISHU_WEBHOOK_URL,
+            FEISHU_WEBHOOK_TYPE,
+            FLOW_FIELD_TITLE,
+            FLOW_FIELD_AUTHORS,
+            FLOW_FIELD_DESCRIPTION,
+            FLOW_SINGLE_SUMMARY,
+        )
         return
 
     papers = summarize_papers(papers)

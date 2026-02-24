@@ -81,6 +81,8 @@ python -m paper_notifier.cli --test-flow
 - For Feishu Flow webhooks, set `FEISHU_WEBHOOK_TYPE=flow` and configure `FLOW_FIELD_DESCRIPTION`.
 - If `FLOW_SINGLE_SUMMARY=true`, only `FLOW_FIELD_DESCRIPTION` is used.
 - If `FLOW_SINGLE_SUMMARY=false`, `FLOW_FIELD_TITLE`, `FLOW_FIELD_AUTHORS`, and `FLOW_FIELD_DESCRIPTION` are all used (one payload per paper).
+- Each paper message includes a `Keywords` entry generated as concept-level phrases from title and abstract (via LLM when `OPENROUTER_API_KEY` is set).
+- If no papers match current filters, the notifier still sends a Feishu message indicating zero matched papers.
 - If `OPENROUTER_API_KEY` is configured, each paper includes an LLM-generated summary using title, authors, abstract, and URL content when accessible.
 - Feishu messages now use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries).
 - The summary ends with exactly one sentence prefixed with `Impact:`.
