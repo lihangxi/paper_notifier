@@ -24,12 +24,44 @@ def _format_countdown(seconds: int) -> str:
     return " ".join(parts)
 
 
+def _print_next_run(trigger: CronTrigger, now: datetime, *, prefix: str = "next run at") -> None:
+    next_run = trigger.get_next_fire_time(None, now)
+    if next_run is None:
+        return
+
+    seconds_until = int((next_run - now).total_seconds())
+    pretty_next_run = next_run.strftime("%Y-%m-%d %H:%M:%S %Z")
+    print(
+        f"[paper-notifier] {prefix} {pretty_next_run} "
+        f"({TIMEZONE}) "
+        f"(in {_format_countdown(seconds_until)})"
+    )
+
+
 def schedule_daily(job_func) -> None:
     hour, minute = parse_time_hhmm(RUN_TIME)
     scheduler = BlockingScheduler(timezone=TIMEZONE)
     trigger = CronTrigger(hour=hour, minute=minute)
+
+    def _scheduled_job_wrapper() -> None:
+        try:
+            job_func()
+        except Exception:
+            _print_next_run(
+                trigger,
+                datetime.now(scheduler.timezone),
+                prefix="run failed; next run at",
+            )
+            raise
+        else:
+            _print_next_run(
+                trigger,
+                datetime.now(scheduler.timezone),
+                prefix="run completed; next run at",
+            )
+
     scheduler.add_job(
-        job_func,
+        _scheduled_job_wrapper,
         trigger=trigger,
         name="daily-paper-notifier",
         misfire_grace_time=SCHEDULER_MISFIRE_GRACE_SECONDS,
@@ -42,11 +74,5 @@ def schedule_daily(job_func) -> None:
         f"misfire_grace={SCHEDULER_MISFIRE_GRACE_SECONDS}s)"
     )
     if next_run is not None:
-        seconds_until = int((next_run - now).total_seconds())
-        pretty_next_run = next_run.strftime("%Y-%m-%d %H:%M:%S %Z")
-        print(
-            f"[paper-notifier] next run at {pretty_next_run} "
-            f"({TIMEZONE}) "
-            f"(in {_format_countdown(seconds_until)})"
-        )
+        _print_next_run(trigger, now)
     scheduler.start()
