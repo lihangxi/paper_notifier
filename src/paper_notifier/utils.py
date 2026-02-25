@@ -15,6 +15,15 @@ def parse_int(value: Optional[str], default: int) -> int:
         return default
 
 
+def parse_float(value: Optional[str], default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 def parse_bool(value: Optional[str], default: bool) -> bool:
     if value is None:
         return default

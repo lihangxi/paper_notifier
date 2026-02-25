@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable
 
 from .models import Paper
 
@@ -12,9 +12,9 @@ _SECTIONS = {"AUTHOR", "TITLE", "ABSTRACT"}
 
 @dataclass
 class KeywordRules:
-    author_patterns: List[re.Pattern]
-    title_patterns: List[re.Pattern]
-    abstract_patterns: List[re.Pattern]
+    author_patterns: list[re.Pattern]
+    title_patterns: list[re.Pattern]
+    abstract_patterns: list[re.Pattern]
 
     @property
     def keyword_count(self) -> int:
@@ -71,7 +71,7 @@ def load_keyword_rules(path: str) -> KeywordRules:
     )
 
 
-def filter_papers_by_keywords(papers: Iterable[Paper], rules: KeywordRules) -> List[Paper]:
+def filter_papers_by_keywords(papers: Iterable[Paper], rules: KeywordRules) -> list[Paper]:
     items = list(papers)
     if not rules.has_rules():
         return items

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
+
+import requests
 
 from .config import (
     CROSSREF_MAILTO,
@@ -14,11 +19,16 @@ from .config import (
     FLOW_FIELD_DESCRIPTION,
     FLOW_FIELD_TITLE,
     FLOW_SINGLE_SUMMARY,
-    KEY_AUTHORS,
     KEYWORDS_FILE,
+    LLM_RELEVANCE_SCORE_THRESHOLD,
+    LLM_RELEVANCE_TOPIC,
     LOG_FILE,
     MAX_PAPERS,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
+    OPENROUTER_TIMEOUT_SECONDS,
     QUERY,
+    RESEARCH_FIELD_TERMS,
     RSS_FEEDS,
     SEMANTIC_SCHOLAR_API_KEY,
     SEMANTIC_SCHOLAR_LIMIT,
@@ -64,18 +74,75 @@ def filter_previously_sent_papers(papers: list[Paper], logged_urls: set[str]) ->
     return [paper for paper in papers if paper.url not in logged_urls]
 
 
-def run_once(include_sent_papers: bool = False) -> None:
-    print(f"[paper-notifier] run started at {utc_now().isoformat()}")
-    if not FEISHU_WEBHOOK_URL:
-        raise SystemExit("FEISHU_WEBHOOK_URL is required")
+def _normalize_url(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
 
-    papers = []
+    parsed = urlparse(raw)
+    scheme = (parsed.scheme or "https").lower()
+    netloc = parsed.netloc.lower()
+    path = parsed.path.rstrip("/")
+    normalized = urlunparse((scheme, netloc, path, "", "", ""))
+    return normalized
+
+
+def _extract_doi(value: str) -> str:
+    match = re.search(r"10\.\d{4,9}/[^\s?#]+", value, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return match.group(0).rstrip(".,;:)\"").lower()
+
+
+def _normalize_title(value: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (value or "").strip().lower())
+    cleaned = re.sub(r"[^a-z0-9 ]+", "", cleaned)
+    return cleaned
+
+
+def _paper_dedup_keys(paper: Paper) -> list[str]:
+    keys: list[str] = []
+
+    normalized_url = _normalize_url(paper.url)
+    if normalized_url:
+        keys.append(f"url:{normalized_url}")
+        doi = _extract_doi(normalized_url)
+        if doi:
+            keys.append(f"doi:{doi}")
+
+    title_key = _normalize_title(paper.title)
+    if title_key:
+        keys.append(f"title:{title_key}")
+
+    return keys
+
+
+def deduplicate_papers(papers: list[Paper]) -> list[Paper]:
+    seen: set[str] = set()
+    deduped: list[Paper] = []
+
+    for paper in papers:
+        keys = _paper_dedup_keys(paper)
+        if any(key in seen for key in keys):
+            continue
+
+        deduped.append(paper)
+        for key in keys:
+            seen.add(key)
+
+    return deduped
+
+
+def fetch_all_papers() -> list[Paper]:
+    papers: list[Paper] = []
     papers.extend(fetch_arxiv(QUERY, MAX_PAPERS, DAYS_BACK))
     papers.extend(fetch_crossref(QUERY, CROSSREF_ROWS, DAYS_BACK, CROSSREF_MAILTO))
     papers.extend(fetch_semantic_scholar(QUERY, SEMANTIC_SCHOLAR_LIMIT, DAYS_BACK, SEMANTIC_SCHOLAR_API_KEY))
     papers.extend(fetch_rss(RSS_FEEDS, DAYS_BACK))
-    print(f"[paper-notifier] fetched papers before author filter: {len(papers)}")
+    return papers
 
+
+def apply_runtime_filters(papers: list[Paper], include_sent_papers: bool) -> list[Paper]:
     keyword_rules = load_keyword_rules(KEYWORDS_FILE)
     if keyword_rules.has_rules():
         before_keywords = len(papers)
@@ -97,9 +164,44 @@ def run_once(include_sent_papers: bool = False) -> None:
                 f"{len(papers)} / {before_log_filter}"
             )
 
-    if KEY_AUTHORS:
-        papers = [paper for paper in papers if matches_key_authors(paper.authors)]
-        print(f"[paper-notifier] papers after KEY_AUTHORS filter: {len(papers)}")
+    before_relevance_filter = len(papers)
+    try:
+        papers = filter_papers_by_llm_relevance(
+            papers,
+            LLM_RELEVANCE_TOPIC,
+            LLM_RELEVANCE_SCORE_THRESHOLD,
+        )
+        print(
+            "[paper-notifier] papers after LLM relevance filter "
+            f"(topic={LLM_RELEVANCE_TOPIC}, threshold={LLM_RELEVANCE_SCORE_THRESHOLD:.2f}): "
+            f"{len(papers)} / {before_relevance_filter}"
+        )
+    except RuntimeError as exc:
+        print(f"[paper-notifier] LLM relevance filter failed: {exc}")
+        papers = filter_papers_by_research_field(papers, RESEARCH_FIELD_TERMS)
+        print(
+            "[paper-notifier] fallback term relevance filter "
+            f"({len(RESEARCH_FIELD_TERMS)} terms): {len(papers)} / {before_relevance_filter}"
+        )
+
+    return papers
+
+
+def run_once(include_sent_papers: bool = False) -> None:
+    print(f"[paper-notifier] run started at {utc_now().isoformat()}")
+    if not FEISHU_WEBHOOK_URL:
+        raise SystemExit("FEISHU_WEBHOOK_URL is required")
+
+    papers = fetch_all_papers()
+
+    fetched_count = len(papers)
+    papers = deduplicate_papers(papers)
+    if len(papers) != fetched_count:
+        print(f"[paper-notifier] papers after same-run dedup: {len(papers)} / {fetched_count}")
+
+    print(f"[paper-notifier] fetched papers before author filter: {len(papers)}")
+
+    papers = apply_runtime_filters(papers, include_sent_papers)
 
     if not papers:
         print("[paper-notifier] no papers matched; sending no-match notification to Feishu")
@@ -156,14 +258,146 @@ def run_test_flow() -> None:
     print("[paper-notifier] flow test post completed")
 
 
-def matches_key_authors(authors: list[str]) -> bool:
-    normalized_authors = [author.lower() for author in authors]
-    for key_author in KEY_AUTHORS:
-        key_lower = key_author.lower()
-        for author in normalized_authors:
-            if key_lower in author:
-                return True
-    return False
+def filter_papers_by_research_field(papers: list[Paper], field_terms: list[str]) -> list[Paper]:
+    if not field_terms:
+        return papers
+
+    patterns = [_compile_match_pattern(term) for term in field_terms if term.strip()]
+    if not patterns:
+        return papers
+
+    return [paper for paper in papers if matches_research_field(paper, patterns)]
+
+
+def filter_papers_by_llm_relevance(
+    papers: list[Paper],
+    topic: str,
+    threshold: float,
+) -> list[Paper]:
+    if not papers:
+        return papers
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY is empty")
+
+    scores = _llm_relevance_scores(papers, topic)
+    if len(scores) != len(papers):
+        raise RuntimeError(
+            f"invalid score count from LLM (expected={len(papers)}, got={len(scores)})"
+        )
+
+    effective_threshold = max(0.0, min(1.0, threshold))
+    filtered: list[Paper] = []
+    for paper, score in zip(papers, scores):
+        if score >= effective_threshold:
+            filtered.append(paper)
+    return filtered
+
+
+def _llm_relevance_scores(papers: list[Paper], topic: str) -> list[float]:
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [{"role": "user", "content": _build_relevance_prompt(papers, topic)}],
+        "reasoning": {"enabled": True},
+    }
+    try:
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            data=json.dumps(payload),
+            timeout=max(5, OPENROUTER_TIMEOUT_SECONDS),
+        )
+        response.raise_for_status()
+        body = response.json()
+    except requests.RequestException as exc:
+        raise RuntimeError(f"OpenRouter request error: {exc}") from exc
+    except ValueError as exc:
+        raise RuntimeError("OpenRouter response is not valid JSON") from exc
+
+    message = body.get("choices", [{}])[0].get("message", {})
+    content = (message.get("content") or "").strip()
+    if not content:
+        raise RuntimeError("OpenRouter returned empty relevance response")
+
+    scores = _parse_relevance_scores(content)
+    return [max(0.0, min(1.0, score)) for score in scores]
+
+
+def _build_relevance_prompt(papers: list[Paper], topic: str) -> str:
+    paper_lines: list[str] = []
+    for idx, paper in enumerate(papers, start=1):
+        abstract = (paper.abstract or "").replace("\n", " ").strip()
+        if len(abstract) > 700:
+            abstract = abstract[:700] + "..."
+        paper_lines.append(
+            f"{idx}. title: {paper.title}\n"
+            f"   source: {paper.source}\n"
+            f"   abstract: {abstract}"
+        )
+
+    joined = "\n".join(paper_lines)
+    return (
+        "Score each paper for semantic relevance to the target research topic. "
+        "Return only JSON with this shape: {\"scores\": [0.0, 0.0, ...]}. "
+        "The array length must equal the number of papers and keep the same order. "
+        "Each score must be a float from 0.0 to 1.0. No markdown, no explanations.\n\n"
+        f"Target topic: {topic}\n\n"
+        f"Papers:\n{joined}"
+    )
+
+
+def _parse_relevance_scores(content: str) -> list[float]:
+    raw = content.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z]*\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+
+    parsed = _load_json_with_fallback(raw)
+    if not isinstance(parsed, dict):
+        raise RuntimeError("LLM relevance response is not a JSON object")
+
+    scores = parsed.get("scores")
+    if not isinstance(scores, list):
+        raise RuntimeError("LLM relevance response missing 'scores' list")
+
+    try:
+        return [float(score) for score in scores]
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("LLM relevance scores must be numeric") from exc
+
+
+def _load_json_with_fallback(raw: str) -> dict | list:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{[\s\S]*\}", raw)
+        if not match:
+            raise RuntimeError("LLM relevance response is not parseable JSON")
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("LLM relevance response is not parseable JSON") from exc
+
+
+def matches_research_field(paper: Paper, patterns: list[re.Pattern]) -> bool:
+    haystack = " ".join([
+        paper.title or "",
+        paper.abstract or "",
+        paper.source or "",
+    ]).strip()
+    if not haystack:
+        return False
+    return any(pattern.search(haystack) for pattern in patterns)
+
+
+def _compile_match_pattern(value: str) -> re.Pattern:
+    try:
+        return re.compile(value, flags=re.IGNORECASE)
+    except re.error:
+        escaped = re.escape(value).replace(r"\*", ".*")
+        return re.compile(escaped, flags=re.IGNORECASE)
 
 
 def write_log(papers) -> None:

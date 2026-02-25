@@ -4,7 +4,7 @@ import os
 
 from dotenv import load_dotenv
 
-from .utils import parse_bool, parse_int
+from .utils import parse_bool, parse_float, parse_int
 
 load_dotenv()
 
@@ -19,10 +19,10 @@ SCHEDULER_MISFIRE_GRACE_SECONDS = parse_int(
 )
 CROSSREF_MAILTO = os.getenv("CROSSREF_MAILTO", "").strip()
 CROSSREF_ROWS = parse_int(os.getenv("CROSSREF_ROWS"), 5)
-KEY_AUTHORS = [
-	author.strip()
-	for author in os.getenv("KEY_AUTHORS", "").split(",")
-	if author.strip()
+RESEARCH_FIELD_TERMS = [
+	term.strip()
+	for term in os.getenv("RESEARCH_FIELD_TERMS", QUERY).split(",")
+	if term.strip()
 ]
 KEYWORDS_FILE = os.getenv("KEYWORDS_FILE", "keywords.txt").strip()
 LOG_FILE = os.getenv("LOG_FILE", "logs/matched_papers.log").strip()
@@ -32,6 +32,11 @@ SEMANTIC_SCHOLAR_LIMIT = parse_int(os.getenv("SEMANTIC_SCHOLAR_LIMIT"), 20)
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip() or "openrouter/free"
 OPENROUTER_TIMEOUT_SECONDS = parse_int(os.getenv("OPENROUTER_TIMEOUT_SECONDS"), 25)
+LLM_RELEVANCE_TOPIC = os.getenv("LLM_RELEVANCE_TOPIC", QUERY).strip() or QUERY
+LLM_RELEVANCE_SCORE_THRESHOLD = parse_float(
+	os.getenv("LLM_RELEVANCE_SCORE_THRESHOLD"),
+	0.7,
+)
 
 RSS_FEEDS = [
 	feed.strip()

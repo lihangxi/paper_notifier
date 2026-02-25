@@ -12,6 +12,16 @@ from .models import Paper
 _KEYWORD_CACHE: dict[str, str] = {}
 
 
+def _post_json(url: str, payload: dict[str, object], timeout: int = 20) -> requests.Response:
+    response = requests.post(url, json=payload, timeout=timeout)
+    response.raise_for_status()
+    return response
+
+
+def _log_feishu_response(prefix: str, response: requests.Response) -> None:
+    print(f"[paper-notifier] {prefix}: status={response.status_code} body={response.text[:200]}")
+
+
 def _parse_llm_concepts(raw: str, max_items: int) -> list[str]:
     text = (raw or "").strip()
     if not text:
@@ -129,13 +139,12 @@ def post_to_feishu(
             payload = {
                 flow_field_description: format_papers(paper_list),
             }
-            response = requests.post(webhook_url, json=payload, timeout=20)
-            response.raise_for_status()
+            response = _post_json(webhook_url, payload)
             print(
                 "[paper-notifier] Feishu flow post mode=single-summary "
                 f"field=({flow_field_description})"
             )
-            print(f"[paper-notifier] Feishu flow response: status={response.status_code} body={response.text[:200]}")
+            _log_feishu_response("Feishu flow response", response)
             return
 
         for paper in paper_list:
@@ -145,9 +154,8 @@ def post_to_feishu(
                 flow_field_authors: ", ".join(paper.authors),
                 flow_field_description: f"Keywords: {keyword_summary}\n\n{paper.summary or paper.abstract}",
             }
-            response = requests.post(webhook_url, json=payload, timeout=20)
-            response.raise_for_status()
-            print(f"[paper-notifier] Feishu flow response: status={response.status_code} body={response.text[:200]}")
+            response = _post_json(webhook_url, payload)
+            _log_feishu_response("Feishu flow response", response)
         print(
             "[paper-notifier] Feishu flow post mode=per-paper "
             f"fields=({flow_field_title}, {flow_field_authors}, {flow_field_description}) "
@@ -161,9 +169,8 @@ def post_to_feishu(
             "text": format_papers(paper_list)
         },
     }
-    response = requests.post(webhook_url, json=payload, timeout=20)
-    response.raise_for_status()
-    print(f"[paper-notifier] Feishu bot response: status={response.status_code} body={response.text[:200]}")
+    response = _post_json(webhook_url, payload)
+    _log_feishu_response("Feishu bot response", response)
 
 
 def post_no_match_to_feishu(
@@ -185,9 +192,8 @@ def post_no_match_to_feishu(
                 flow_field_authors: "paper-notifier",
                 flow_field_description: message,
             }
-        response = requests.post(webhook_url, json=payload, timeout=20)
-        response.raise_for_status()
-        print(f"[paper-notifier] Feishu no-match flow response: status={response.status_code} body={response.text[:200]}")
+        response = _post_json(webhook_url, payload)
+        _log_feishu_response("Feishu no-match flow response", response)
         return
 
     payload = {
@@ -196,20 +202,5 @@ def post_no_match_to_feishu(
             "text": message,
         },
     }
-    response = requests.post(webhook_url, json=payload, timeout=20)
-    response.raise_for_status()
-    print(f"[paper-notifier] Feishu no-match bot response: status={response.status_code} body={response.text[:200]}")
-
-
-def _summarize_authors(papers: Iterable[Paper]) -> str:
-    seen = set()
-    names = []
-    for paper in papers:
-        for author in paper.authors:
-            if author in seen:
-                continue
-            seen.add(author)
-            names.append(author)
-            if len(names) >= 10:
-                return ", ".join(names) + ", et al."
-    return ", ".join(names) if names else "Multiple authors"
+    response = _post_json(webhook_url, payload)
+    _log_feishu_response("Feishu no-match bot response", response)

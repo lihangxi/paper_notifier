@@ -3,7 +3,6 @@ from __future__ import annotations
 import html
 import json
 import re
-from typing import List
 
 import requests
 
@@ -11,54 +10,41 @@ from .config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_TIMEOUT_SEC
 from .models import Paper
 
 
+_LEADING_CLEANUP_PATTERNS: tuple[tuple[str, int], ...] = (
+    (r"^\s*arxiv\s*:\s*\S+\s*(announce\s*type\s*:\s*[^:]+)?\s*", re.IGNORECASE),
+    (r"^\s*summary\s*:\s*", re.IGNORECASE),
+    (r"^\s*abstract\s*:\s*", re.IGNORECASE),
+    (r"^\s*[^.]{0,120}?\bpublished\s+online\b[^.]*[.;:]\s*", re.IGNORECASE),
+    (r"^\s*doi\s*[:\s]\s*10\.\S+\s*", re.IGNORECASE),
+    (r"^\s*[^.]{0,140}?\bdoi\s*[:\s]\s*10\.\S+\s*", re.IGNORECASE),
+    (r"^\s*(?:doi\s*[:\s]*)?(?:10\.)?\d{3,9}/\S+\s*", re.IGNORECASE),
+    (r"^\s*[,;:\-]+\s*", 0),
+)
+
+
 def _collapse_whitespace(text: str) -> str:
     return " ".join(text.split())
+
+
+def _strip_leading_noise(text: str) -> str:
+    cleaned = text
+    for pattern, flags in _LEADING_CLEANUP_PATTERNS:
+        cleaned = re.sub(pattern, "", cleaned, flags=flags)
+    return cleaned
 
 
 def extract_abstract(text: str, limit: int = 380) -> str:
     cleaned = html.unescape(text or "")
     cleaned = re.sub(r"<[^>]+>", " ", cleaned)
-    cleaned = " ".join(cleaned.split())
+    cleaned = _collapse_whitespace(cleaned)
 
     if re.search(r"\babstract\s*:", cleaned, flags=re.IGNORECASE):
         parts = re.split(r"\babstract\s*:\s*", cleaned, flags=re.IGNORECASE)
         if len(parts) > 1 and len(parts[0]) < 160:
             cleaned = parts[-1].strip()
 
-    cleaned = re.sub(
-        r"^\s*arxiv\s*:\s*\S+\s*(announce\s*type\s*:\s*[^:]+)?\s*",
-        "",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(r"^\s*summary\s*:\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"^\s*abstract\s*:\s*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(
-        r"^\s*[^.]{0,120}?\bpublished\s+online\b[^.]*[.;:]\s*",
-        "",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        r"^\s*doi\s*[:\s]\s*10\.\S+\s*",
-        "",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        r"^\s*[^.]{0,140}?\bdoi\s*[:\s]\s*10\.\S+\s*",
-        "",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(
-        r"^\s*(?:doi\s*[:\s]*)?(?:10\.)?\d{3,9}/\S+\s*",
-        "",
-        cleaned,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(r"^\s*[,;:\-]+\s*", "", cleaned)
-    cleaned = " ".join(cleaned.split())
+    cleaned = _strip_leading_noise(cleaned)
+    cleaned = _collapse_whitespace(cleaned)
 
     if len(cleaned) <= limit:
         return cleaned
@@ -182,8 +168,7 @@ def _fallback_summary(paper: Paper) -> str:
     return _ensure_impact_sentence(abstract, paper.title, paper.source)
 
 
-def summarize_papers(papers: List[Paper]) -> List[Paper]:
-    summarized = []
+def summarize_papers(papers: list[Paper]) -> list[Paper]:
     for paper in papers:
         paper.abstract = extract_abstract(paper.abstract)
         url_context = _fetch_url_context(paper.url)
@@ -191,6 +176,5 @@ def summarize_papers(papers: List[Paper]) -> List[Paper]:
         paper.summary = _ensure_impact_sentence(generated_summary, paper.title, paper.source)
         if not paper.summary:
             paper.summary = _fallback_summary(paper)
-        summarized.append(paper)
-    return summarized
+    return papers
 

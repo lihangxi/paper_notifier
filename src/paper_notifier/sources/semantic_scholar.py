@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List
 
 import requests
 
@@ -9,15 +8,13 @@ from ..models import Paper
 from ..utils import days_ago, utc_now
 
 
-def fetch_semantic_scholar(
-    query: str,
-    limit: int,
-    days_back: int,
-    api_key: str,
-) -> List[Paper]:
-    if not query:
-        return []
+def _semantic_headers(api_key: str) -> dict[str, str]:
+    if not api_key:
+        return {}
+    return {"x-api-key": api_key}
 
+
+def _semantic_params(query: str, limit: int) -> dict[str, str | int]:
     fields = [
         "title",
         "authors",
@@ -27,14 +24,32 @@ def fetch_semantic_scholar(
         "url",
         "publicationDate",
     ]
-    params = {
+    return {
         "query": query,
         "limit": max(1, min(limit, 100)),
         "fields": ",".join(fields),
     }
-    headers = {}
-    if api_key:
-        headers["x-api-key"] = api_key
+
+
+def _semantic_authors(item: dict[str, object]) -> list[str]:
+    return [
+        name
+        for name in (author.get("name", "").strip() for author in item.get("authors", []))
+        if name
+    ]
+
+
+def fetch_semantic_scholar(
+    query: str,
+    limit: int,
+    days_back: int,
+    api_key: str,
+) -> list[Paper]:
+    if not query:
+        return []
+
+    params = _semantic_params(query, limit)
+    headers = _semantic_headers(api_key)
 
     try:
         response = requests.get(
@@ -53,13 +68,12 @@ def fetch_semantic_scholar(
     data = response.json().get("data", [])
 
     cutoff = days_ago(days_back)
-    papers: List[Paper] = []
+    papers: list[Paper] = []
     for item in data:
         published = _parse_publication_date(item) or utc_now()
         if published < cutoff:
             continue
-        authors = [author.get("name", "").strip() for author in item.get("authors", [])]
-        authors = [author for author in authors if author]
+        authors = _semantic_authors(item)
         papers.append(
             Paper(
                 title=(item.get("title") or "").strip(),
@@ -75,11 +89,12 @@ def fetch_semantic_scholar(
     return papers
 
 
-def _parse_publication_date(item: dict) -> datetime | None:
+def _parse_publication_date(item: dict[str, object]) -> datetime | None:
     value = (item.get("publicationDate") or "").strip()
     if value:
         try:
-            return datetime.fromisoformat(value).replace(tzinfo=timezone.utc)
+            parsed = datetime.fromisoformat(value)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
         except ValueError:
             return None
 

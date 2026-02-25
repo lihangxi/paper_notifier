@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Iterable, List
+from typing import Iterable
 
 import feedparser
 
@@ -9,13 +9,13 @@ from ..models import Paper
 from ..utils import days_ago, utc_now
 
 
-def fetch_rss(feeds: Iterable[str], days_back: int) -> List[Paper]:
+def fetch_rss(feeds: Iterable[str], days_back: int) -> list[Paper]:
     feed_list = [feed for feed in feeds if feed]
     if not feed_list:
         return []
 
     cutoff = days_ago(days_back)
-    papers: List[Paper] = []
+    papers: list[Paper] = []
 
     for feed_url in feed_list:
         feed = feedparser.parse(feed_url)
@@ -45,7 +45,7 @@ def fetch_rss(feeds: Iterable[str], days_back: int) -> List[Paper]:
     return papers
 
 
-def _entry_published(entry: dict) -> datetime | None:
+def _entry_published(entry: dict[str, object]) -> datetime | None:
     for key in ("published_parsed", "updated_parsed"):
         value = entry.get(key)
         if value:
@@ -53,7 +53,7 @@ def _entry_published(entry: dict) -> datetime | None:
     return None
 
 
-def _entry_authors(entry: dict) -> List[str]:
+def _entry_authors(entry: dict[str, object]) -> list[str]:
     authors = []
     for author in entry.get("authors", []):
         name = author.get("name", "").strip()

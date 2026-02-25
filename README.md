@@ -73,10 +73,12 @@ python -m paper_notifier.cli --test-flow
 - You can filter papers using `keywords.txt` with `AUTHOR`, `TITLE`, `ABSTRACT` sections (regex supported). See the project repo root for an example if one is not present.
 - Create `keywords.txt` in the root directory if you want to filter papers; it is not tracked by git.
 - Crossref results depend on metadata quality; not every record includes abstracts.
-- To filter by authors, set `KEY_AUTHORS` as a comma-separated list in `.env`.
+- Relevance filtering uses LLM scoring first (`LLM_RELEVANCE_TOPIC` + `LLM_RELEVANCE_SCORE_THRESHOLD`).
+- If LLM relevance API fails, the app prints the failure message in terminal and falls back to term filtering with `RESEARCH_FIELD_TERMS`.
 - To log matched papers, set `LOG_FILE` (defaults to `logs/matched_papers.log`).
 - To enable Semantic Scholar, set `SEMANTIC_SCHOLAR_API_KEY` (optional) and `SEMANTIC_SCHOLAR_LIMIT`.
 - To add journal feeds, set `RSS_FEEDS` as a comma-separated list of RSS URLs.
+- Within a single run, papers are deduplicated by normalized URL/DOI/title before keyword and relevance filters.
 - If you see occasional APScheduler "run time ... was missed" warnings near startup, increase `SCHEDULER_MISFIRE_GRACE_SECONDS` (default `60`).
 - For Feishu Flow webhooks, set `FEISHU_WEBHOOK_TYPE=flow` and configure `FLOW_FIELD_DESCRIPTION`.
 - If `FLOW_SINGLE_SUMMARY=true`, only `FLOW_FIELD_DESCRIPTION` is used.
