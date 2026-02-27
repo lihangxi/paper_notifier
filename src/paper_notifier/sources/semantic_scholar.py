@@ -64,7 +64,9 @@ def fetch_semantic_scholar(
     if response.status_code == 429:
         return []
 
-    response.raise_for_status()
+    if not response.ok:
+        return []
+
     data = response.json().get("data", [])
 
     cutoff = days_ago(days_back)

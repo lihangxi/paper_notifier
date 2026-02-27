@@ -27,19 +27,40 @@ def _parse_llm_concepts(raw: str, max_items: int) -> list[str]:
     if not text:
         return []
 
+    text = re.sub(r"^\s*```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```\s*$", "", text, flags=re.IGNORECASE)
+
     parsed: list[str] = []
-    try:
-        data = json.loads(text)
+    json_candidates = [text]
+    array_match = re.search(r"\[[\s\S]*\]", text)
+    if array_match:
+        json_candidates.append(array_match.group(0).strip())
+
+    for candidate in json_candidates:
+        try:
+            data = json.loads(candidate)
+        except Exception:
+            continue
+
         if isinstance(data, list):
             parsed = [str(item).strip() for item in data]
-    except Exception:
-        lines = [segment.strip() for segment in re.split(r"\n|,", text) if segment.strip()]
+            break
+
+    if not parsed:
+        lines = [segment.strip() for segment in re.split(r"\n|;", text) if segment.strip()]
+        if len(lines) == 1 and "," in lines[0] and "[" not in lines[0] and "]" not in lines[0]:
+            lines = [segment.strip() for segment in lines[0].split(",") if segment.strip()]
         parsed = [re.sub(r"^[\-\*\d\.)\s]+", "", line).strip() for line in lines]
 
     concepts: list[str] = []
     seen: set[str] = set()
     for item in parsed:
         cleaned = item.strip().strip("\"'").strip()
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = cleaned.replace("```", "")
+        cleaned = cleaned.strip("[]").strip().strip("\"'").strip()
+        if cleaned.lower() == "json":
+            continue
         cleaned = re.sub(r"\s+", " ", cleaned)
         if len(cleaned) < 4:
             continue

@@ -135,10 +135,22 @@ def deduplicate_papers(papers: list[Paper]) -> list[Paper]:
 
 def fetch_all_papers() -> list[Paper]:
     papers: list[Paper] = []
-    papers.extend(fetch_arxiv(QUERY, MAX_PAPERS, DAYS_BACK))
-    papers.extend(fetch_crossref(QUERY, CROSSREF_ROWS, DAYS_BACK, CROSSREF_MAILTO))
-    papers.extend(fetch_semantic_scholar(QUERY, SEMANTIC_SCHOLAR_LIMIT, DAYS_BACK, SEMANTIC_SCHOLAR_API_KEY))
-    papers.extend(fetch_rss(RSS_FEEDS, DAYS_BACK))
+    fetchers = [
+        ("arxiv", lambda: fetch_arxiv(QUERY, MAX_PAPERS, DAYS_BACK)),
+        ("crossref", lambda: fetch_crossref(QUERY, CROSSREF_ROWS, DAYS_BACK, CROSSREF_MAILTO)),
+        (
+            "semantic_scholar",
+            lambda: fetch_semantic_scholar(QUERY, SEMANTIC_SCHOLAR_LIMIT, DAYS_BACK, SEMANTIC_SCHOLAR_API_KEY),
+        ),
+        ("rss", lambda: fetch_rss(RSS_FEEDS, DAYS_BACK)),
+    ]
+
+    for source_name, fetcher in fetchers:
+        try:
+            papers.extend(fetcher())
+        except Exception as exc:
+            print(f"[paper-notifier] source fetch failed ({source_name}): {exc}")
+
     return papers
 
 

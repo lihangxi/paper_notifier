@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Iterable
 
@@ -19,8 +20,10 @@ def fetch_rss(feeds: Iterable[str], days_back: int) -> list[Paper]:
 
     for feed_url in feed_list:
         feed = feedparser.parse(feed_url)
-        source_name = feed.feed.get("title", "RSS")
+        source_name = feed.feed.get("title", "RSS") if isinstance(feed.feed, Mapping) else "RSS"
         for entry in feed.entries:
+            if not isinstance(entry, Mapping):
+                continue
             published = _entry_published(entry) or utc_now()
             if published < cutoff:
                 continue
@@ -55,14 +58,33 @@ def _entry_published(entry: dict[str, object]) -> datetime | None:
 
 def _entry_authors(entry: dict[str, object]) -> list[str]:
     authors = []
-    for author in entry.get("authors", []):
-        name = author.get("name", "").strip()
+    raw_authors = entry.get("authors", [])
+
+    if isinstance(raw_authors, str):
+        name = raw_authors.strip()
         if name:
             authors.append(name)
+    elif isinstance(raw_authors, list):
+        for author in raw_authors:
+            if isinstance(author, str):
+                name = author.strip()
+            elif isinstance(author, Mapping):
+                name = str(author.get("name", "")).strip()
+            else:
+                name = ""
+
+            if name:
+                authors.append(name)
 
     if not authors:
-        author = (entry.get("author") or "").strip()
-        if author:
-            authors.append(author)
+        fallback_author = entry.get("author")
+        if isinstance(fallback_author, str):
+            author = fallback_author.strip()
+            if author:
+                authors.append(author)
+        elif isinstance(fallback_author, Mapping):
+            author = str(fallback_author.get("name", "")).strip()
+            if author:
+                authors.append(author)
 
     return authors
