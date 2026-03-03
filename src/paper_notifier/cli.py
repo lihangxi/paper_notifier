@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
-import requests
-
 from .config import (
     CROSSREF_MAILTO,
     CROSSREF_ROWS,
@@ -26,7 +24,6 @@ from .config import (
     MAX_PAPERS,
     OPENROUTER_API_KEY,
     OPENROUTER_MODEL,
-    OPENROUTER_TIMEOUT_SECONDS,
     QUERY,
     RESEARCH_FIELD_TERMS,
     RSS_FEEDS,
@@ -36,6 +33,7 @@ from .config import (
 from .feishu import post_no_match_to_feishu, post_to_feishu
 from .keywords import filter_papers_by_keywords, load_keyword_rules
 from .models import Paper
+from .openrouter import post_chat_completions
 from .scheduler import schedule_daily
 from .sources.arxiv import fetch_arxiv
 from .sources.crossref import fetch_crossref
@@ -311,22 +309,7 @@ def _llm_relevance_scores(papers: list[Paper], topic: str) -> list[float]:
         "messages": [{"role": "user", "content": _build_relevance_prompt(papers, topic)}],
         "reasoning": {"enabled": True},
     }
-    try:
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            data=json.dumps(payload),
-            timeout=max(5, OPENROUTER_TIMEOUT_SECONDS),
-        )
-        response.raise_for_status()
-        body = response.json()
-    except requests.RequestException as exc:
-        raise RuntimeError(f"OpenRouter request error: {exc}") from exc
-    except ValueError as exc:
-        raise RuntimeError("OpenRouter response is not valid JSON") from exc
+    body = post_chat_completions(payload, "relevance filter")
 
     message = body.get("choices", [{}])[0].get("message", {})
     content = (message.get("content") or "").strip()

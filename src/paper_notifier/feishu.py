@@ -6,8 +6,9 @@ from typing import Iterable
 
 import requests
 
-from .config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_TIMEOUT_SECONDS
+from .config import OPENROUTER_API_KEY, OPENROUTER_MODEL
 from .models import Paper
+from .openrouter import post_chat_completions
 
 _KEYWORD_CACHE: dict[str, str] = {}
 
@@ -91,17 +92,7 @@ def _llm_concept_keywords(paper: Paper, max_items: int = 5) -> list[str]:
         "reasoning": {"enabled": True},
     }
     try:
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            data=json.dumps(payload),
-            timeout=max(5, OPENROUTER_TIMEOUT_SECONDS),
-        )
-        response.raise_for_status()
-        body = response.json()
+        body = post_chat_completions(payload, "concept keyword generation")
         message = body.get("choices", [{}])[0].get("message", {})
         content = (message.get("content") or "").strip()
         return _parse_llm_concepts(content, max_items)

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import html
-import json
 import re
 
 import requests
 
-from .config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_TIMEOUT_SECONDS
+from .config import OPENROUTER_API_KEY, OPENROUTER_MODEL
 from .models import Paper
+from .openrouter import post_chat_completions
 
 
 _LEADING_CLEANUP_PATTERNS: tuple[tuple[str, int], ...] = (
@@ -142,17 +142,7 @@ def summarize_with_openrouter(paper: Paper, url_context: str) -> str:
         "reasoning": {"enabled": True},
     }
     try:
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            data=json.dumps(payload),
-            timeout=max(5, OPENROUTER_TIMEOUT_SECONDS),
-        )
-        response.raise_for_status()
-        body = response.json()
+        body = post_chat_completions(payload, "summary generation")
         message = body.get("choices", [{}])[0].get("message", {})
         content = (message.get("content") or "").strip()
         return _normalize_summary_text(content)

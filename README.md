@@ -22,6 +22,8 @@ OpenRouter-related options:
 OPENROUTER_API_KEY=
 OPENROUTER_MODEL=openrouter/free
 OPENROUTER_TIMEOUT_SECONDS=25
+OPENROUTER_RETRY_LIMIT=10
+OPENROUTER_RETRY_INTERVAL_SECONDS=60
 ```
 
 Recommended Feishu Flow config (single summary field):
@@ -86,6 +88,7 @@ python -m paper_notifier.cli --test-flow
 - Each paper message includes a `Keywords` entry generated as concept-level phrases from title and abstract (via LLM when `OPENROUTER_API_KEY` is set).
 - If no papers match current filters, the notifier still sends a Feishu message indicating zero matched papers.
 - If `OPENROUTER_API_KEY` is configured, each paper includes an LLM-generated summary using title, authors, abstract, and URL content when accessible.
+- OpenRouter requests retry automatically on HTTP `429` up to `OPENROUTER_RETRY_LIMIT` attempts with `OPENROUTER_RETRY_INTERVAL_SECONDS` pause between attempts.
 - Feishu messages now use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries).
 - The summary ends with exactly one sentence prefixed with `Impact:`.
 - Abstract text is cleaned to remove common metadata prefixes (for example `Published online` and leading DOI strings).
