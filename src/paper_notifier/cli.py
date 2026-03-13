@@ -22,8 +22,6 @@ from .config import (
     LLM_RELEVANCE_TOPIC,
     LOG_FILE,
     MAX_PAPERS,
-    OPENROUTER_API_KEY,
-    OPENROUTER_MODEL,
     QUERY,
     RESEARCH_FIELD_TERMS,
     RSS_FEEDS,
@@ -32,8 +30,13 @@ from .config import (
 )
 from .feishu import post_no_match_to_feishu, post_to_feishu
 from .keywords import filter_papers_by_keywords, load_keyword_rules
+from .llm_client import (
+    get_active_model,
+    get_active_provider_name,
+    has_active_api_key,
+    post_chat_completions,
+)
 from .models import Paper
-from .openrouter import post_chat_completions
 from .scheduler import schedule_daily
 from .sources.arxiv import fetch_arxiv
 from .sources.crossref import fetch_crossref
@@ -286,8 +289,8 @@ def filter_papers_by_llm_relevance(
 ) -> list[Paper]:
     if not papers:
         return papers
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError("OPENROUTER_API_KEY is empty")
+    if not has_active_api_key():
+        raise RuntimeError(f"missing API key for provider {get_active_provider_name()}")
 
     scores = _llm_relevance_scores(papers, topic)
     if len(scores) != len(papers):
@@ -305,16 +308,15 @@ def filter_papers_by_llm_relevance(
 
 def _llm_relevance_scores(papers: list[Paper], topic: str) -> list[float]:
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": get_active_model(),
         "messages": [{"role": "user", "content": _build_relevance_prompt(papers, topic)}],
-        "reasoning": {"enabled": True},
     }
     body = post_chat_completions(payload, "relevance filter")
 
     message = body.get("choices", [{}])[0].get("message", {})
     content = (message.get("content") or "").strip()
     if not content:
-        raise RuntimeError("OpenRouter returned empty relevance response")
+        raise RuntimeError(f"{get_active_provider_name()} returned empty relevance response")
 
     scores = _parse_relevance_scores(content)
     return [max(0.0, min(1.0, score)) for score in scores]

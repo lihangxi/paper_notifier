@@ -5,9 +5,13 @@ import re
 
 import requests
 
-from .config import OPENROUTER_API_KEY, OPENROUTER_MODEL
+from .llm_client import (
+    get_active_model,
+    get_active_provider_name,
+    has_active_api_key,
+    post_chat_completions,
+)
 from .models import Paper
-from .openrouter import post_chat_completions
 
 
 _LEADING_CLEANUP_PATTERNS: tuple[tuple[str, int], ...] = (
@@ -117,8 +121,8 @@ def _ensure_impact_sentence(summary: str, title: str, venue: str) -> str:
     return f"{compact}. {_heuristic_impact_sentence(title, venue)}"
 
 
-def summarize_with_openrouter(paper: Paper, url_context: str) -> str:
-    if not OPENROUTER_API_KEY:
+def summarize_with_llm(paper: Paper, url_context: str) -> str:
+    if not has_active_api_key():
         return ""
 
     author_text = ", ".join(paper.authors[:8]) if paper.authors else "Unknown authors"
@@ -137,9 +141,8 @@ def summarize_with_openrouter(paper: Paper, url_context: str) -> str:
     )
 
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": get_active_model(),
         "messages": [{"role": "user", "content": prompt}],
-        "reasoning": {"enabled": True},
     }
     try:
         body = post_chat_completions(payload, "summary generation")
@@ -147,7 +150,7 @@ def summarize_with_openrouter(paper: Paper, url_context: str) -> str:
         content = (message.get("content") or "").strip()
         return _normalize_summary_text(content)
     except Exception as exc:
-        print(f"[paper-notifier] OpenRouter summary generation failed: {exc}")
+        print(f"[paper-notifier] {get_active_provider_name()} summary generation failed: {exc}")
         return ""
 
 
@@ -162,7 +165,7 @@ def summarize_papers(papers: list[Paper]) -> list[Paper]:
     for paper in papers:
         paper.abstract = extract_abstract(paper.abstract)
         url_context = _fetch_url_context(paper.url)
-        generated_summary = summarize_with_openrouter(paper, url_context)
+        generated_summary = summarize_with_llm(paper, url_context)
         paper.summary = _ensure_impact_sentence(generated_summary, paper.title, paper.source)
         if not paper.summary:
             paper.summary = _fallback_summary(paper)
