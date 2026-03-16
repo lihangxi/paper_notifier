@@ -46,11 +46,31 @@ from .summarize import summarize_papers
 from .utils import utc_now
 
 
+def _project_root() -> Path:
+    module_path = Path(__file__).resolve()
+    for parent in module_path.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return module_path.parents[2]
+
+
+def _resolve_runtime_path(value: str) -> Path:
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return candidate
+
+    cwd_candidate = Path.cwd() / candidate
+    if cwd_candidate.exists():
+        return cwd_candidate
+
+    return _project_root() / candidate
+
+
 def load_logged_paper_urls(log_file: str) -> set[str]:
     if not log_file:
         return set()
 
-    path = Path(log_file)
+    path = _resolve_runtime_path(log_file)
     if not path.exists():
         return set()
 
@@ -156,14 +176,17 @@ def fetch_all_papers() -> list[Paper]:
 
 
 def apply_runtime_filters(papers: list[Paper], include_sent_papers: bool) -> list[Paper]:
-    keyword_rules = load_keyword_rules(KEYWORDS_FILE)
+    keyword_file_path = _resolve_runtime_path(KEYWORDS_FILE)
+    keyword_rules = load_keyword_rules(str(keyword_file_path))
     if keyword_rules.has_rules():
         before_keywords = len(papers)
         papers = filter_papers_by_keywords(papers, keyword_rules)
         print(
-            f"[paper-notifier] papers after keywords filter ({KEYWORDS_FILE}, {keyword_rules.keyword_count} keywords): "
+            f"[paper-notifier] papers after keywords filter ({keyword_file_path}, {keyword_rules.keyword_count} keywords): "
             f"{len(papers)} / {before_keywords}"
         )
+    else:
+        print(f"[paper-notifier] keyword filter skipped (no rules found in {keyword_file_path})")
 
     if include_sent_papers:
         print("[paper-notifier] sent-paper filter bypassed via --include-sent-papers")
@@ -212,7 +235,7 @@ def run_once(include_sent_papers: bool = False) -> None:
     if len(papers) != fetched_count:
         print(f"[paper-notifier] papers after same-run dedup: {len(papers)} / {fetched_count}")
 
-    print(f"[paper-notifier] fetched papers before author filter: {len(papers)}")
+    print(f"[paper-notifier] fetched papers before filters: {len(papers)}")
 
     papers = apply_runtime_filters(papers, include_sent_papers)
 
@@ -306,20 +329,33 @@ def filter_papers_by_llm_relevance(
     return filtered
 
 
+_LLM_RELEVANCE_BATCH_SIZE = 50
+
+
 def _llm_relevance_scores(papers: list[Paper], topic: str) -> list[float]:
-    payload = {
-        "model": get_active_model(),
-        "messages": [{"role": "user", "content": _build_relevance_prompt(papers, topic)}],
-    }
-    body = post_chat_completions(payload, "relevance filter")
+    all_scores: list[float] = []
+    for batch_start in range(0, len(papers), _LLM_RELEVANCE_BATCH_SIZE):
+        batch = papers[batch_start : batch_start + _LLM_RELEVANCE_BATCH_SIZE]
+        payload = {
+            "model": get_active_model(),
+            "messages": [{"role": "user", "content": _build_relevance_prompt(batch, topic)}],
+        }
+        body = post_chat_completions(payload, "relevance filter")
 
-    message = body.get("choices", [{}])[0].get("message", {})
-    content = (message.get("content") or "").strip()
-    if not content:
-        raise RuntimeError(f"{get_active_provider_name()} returned empty relevance response")
+        message = body.get("choices", [{}])[0].get("message", {})
+        content = (message.get("content") or "").strip()
+        if not content:
+            raise RuntimeError(f"{get_active_provider_name()} returned empty relevance response")
 
-    scores = _parse_relevance_scores(content)
-    return [max(0.0, min(1.0, score)) for score in scores]
+        scores = _parse_relevance_scores(content)
+        if len(scores) != len(batch):
+            raise RuntimeError(
+                f"invalid score count from LLM in batch "
+                f"(batch={batch_start // _LLM_RELEVANCE_BATCH_SIZE + 1}, "
+                f"expected={len(batch)}, got={len(scores)})"
+            )
+        all_scores.extend(max(0.0, min(1.0, s)) for s in scores)
+    return all_scores
 
 
 def _build_relevance_prompt(papers: list[Paper], topic: str) -> str:
@@ -401,7 +437,7 @@ def write_log(papers) -> None:
     if not LOG_FILE:
         return
 
-    path = Path(LOG_FILE)
+    path = _resolve_runtime_path(LOG_FILE)
     if path.parent:
         path.parent.mkdir(parents=True, exist_ok=True)
 
