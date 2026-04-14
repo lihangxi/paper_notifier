@@ -14,7 +14,7 @@ pip install -e .
 
 3) Copy `.env.example` to `.env` and fill in your configuration values (especially `FEISHU_WEBHOOK_URL`).
 4) (Optional) Create a `keywords.txt` file to filter papers by author, title, or abstract patterns. Use sections `AUTHOR`, `TITLE`, `ABSTRACT` with regex or wildcard patterns (one per line).
-5) (Optional) Configure an LLM provider to generate a summary for each paper (using abstract + accessible URL content), with a one-sentence impact line at the end.
+5) (Optional) Configure an LLM provider to generate paper summaries and concept keywords (both can be enabled/disabled via env toggles).
 
 LLM provider options:
 
@@ -32,6 +32,10 @@ SILICONFLOW_MODEL=Qwen/Qwen2.5-7B-Instruct
 OPENROUTER_TIMEOUT_SECONDS=25
 OPENROUTER_RETRY_LIMIT=10
 OPENROUTER_RETRY_INTERVAL_SECONDS=60
+
+SUMMARY_LLM_ENABLED=true
+KEYWORD_LLM_ENABLED=true
+IMPACT_GENERATION_ENABLED=true
 ```
 
 Set `LLM_PROVIDER=siliconflow` to use SiliconFlow via the OpenAI-compatible API.
@@ -95,11 +99,12 @@ python -m paper_notifier.cli --test-flow
 - For Feishu Flow webhooks, set `FEISHU_WEBHOOK_TYPE=flow` and configure `FLOW_FIELD_DESCRIPTION`.
 - If `FLOW_SINGLE_SUMMARY=true`, only `FLOW_FIELD_DESCRIPTION` is used.
 - If `FLOW_SINGLE_SUMMARY=false`, `FLOW_FIELD_TITLE`, `FLOW_FIELD_AUTHORS`, and `FLOW_FIELD_DESCRIPTION` are all used (one payload per paper).
-- Each paper message includes a `Keywords` entry generated as concept-level phrases from title and abstract when the configured provider API key is set.
 - If no papers match current filters, the notifier still sends a Feishu message indicating zero matched papers.
-- If the configured provider API key is available, each paper includes an LLM-generated summary using title, authors, abstract, and URL content when accessible.
+- If `SUMMARY_LLM_ENABLED=true` and provider API key is available, each paper includes an LLM-generated summary using title, authors, abstract, and URL content when accessible.
+- If `KEYWORD_LLM_ENABLED=true` and provider API key is available, each paper includes concept-level `Keywords` generated from title and abstract.
+- If `IMPACT_GENERATION_ENABLED=true`, the summary ends with one sentence prefixed with `Impact:`; if false, no `Impact:` sentence is generated.
 - LLM requests retry automatically on HTTP `429` up to `OPENROUTER_RETRY_LIMIT` attempts with `OPENROUTER_RETRY_INTERVAL_SECONDS` pause between attempts.
 - Feishu messages now use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries).
-- The summary ends with exactly one sentence prefixed with `Impact:`.
 - Abstract text is cleaned to remove common metadata prefixes (for example `Published online` and leading DOI strings).
-- On LLM API failure or missing key, the notifier falls back to abstract-based summary plus a heuristic impact sentence.
+- On summary LLM failure (or if disabled), the notifier falls back to abstract-based summary content.
+- On keyword LLM failure (or if disabled), the notifier falls back to deterministic title-based concept phrases.

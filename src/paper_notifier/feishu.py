@@ -6,11 +6,155 @@ from typing import Iterable
 
 import requests
 
-from .config import OPENROUTER_API_KEY, OPENROUTER_MODEL
+from .llm_client import (
+    get_active_model,
+    get_active_provider_name,
+    has_active_api_key,
+    post_chat_completions,
+)
+from .config import KEYWORD_LLM_ENABLED
 from .models import Paper
-from .openrouter import post_chat_completions
 
 _KEYWORD_CACHE: dict[str, str] = {}
+_KEYWORD_LLM_DISABLED_REASON: str | None = None
+
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "in",
+    "into",
+    "is",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "under",
+    "using",
+    "via",
+    "with",
+    "down",
+    "up",
+    "over",
+}
+
+_GENERIC_DOMAIN_TOKENS = {
+    "algorithm",
+    "algorithms",
+    "communication",
+    "complexity",
+    "computational",
+    "computing",
+    "entanglement",
+    "magic",
+    "markovian",
+    "protocol",
+    "protocols",
+    "quantum",
+    "qubit",
+    "qubits",
+    "resource",
+    "resources",
+    "state",
+    "states",
+}
+
+
+def _tokenize_words(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z][A-Za-z0-9\-]*", text or "")
+
+
+def _source_tokens_from_paper(paper: Paper) -> set[str]:
+    text = f"{paper.title} {paper.abstract}"
+    return {
+        token.lower()
+        for token in _tokenize_words(text)
+        if len(token) >= 3 and token.lower() not in _STOPWORDS
+    }
+
+
+def _is_low_quality_text(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (text or "")).strip()
+    if not normalized:
+        return True
+    if "```" in normalized:
+        return True
+    if re.search(r"\b(\w{1,20})(?:\s+\1){2,}\b", normalized, flags=re.IGNORECASE):
+        return True
+    if re.search(r"\be(?:\s+e){3,}\b", normalized, flags=re.IGNORECASE):
+        return True
+
+    letters = sum(1 for ch in normalized if ch.isalpha())
+    if letters / max(1, len(normalized)) < 0.45:
+        return True
+    return False
+
+
+def _is_valid_concept_phrase(text: str, source_tokens: set[str] | None = None) -> bool:
+    phrase = re.sub(r"\s+", " ", (text or "")).strip(" .,:;\"'`()[]{}")
+    if not phrase:
+        return False
+    if _is_low_quality_text(phrase):
+        return False
+
+    words = _tokenize_words(phrase)
+    if len(words) < 2 or len(words) > 6:
+        return False
+    if any(len(word) == 1 for word in words):
+        return False
+
+    lowered = [word.lower() for word in words]
+    if len(set(lowered)) == 1:
+        return False
+    if all(word in _STOPWORDS for word in lowered):
+        return False
+    if lowered[0] in _STOPWORDS or lowered[-1] in _STOPWORDS:
+        return False
+
+    if source_tokens:
+        unsupported_count = sum(
+            1
+            for word in lowered
+            if len(word) >= 4
+            and word not in source_tokens
+            and word not in _GENERIC_DOMAIN_TOKENS
+        )
+        if unsupported_count > 0:
+            return False
+    return True
+
+
+def _fallback_concepts_from_title(title: str, max_items: int) -> list[str]:
+    concepts: list[str] = []
+    seen: set[str] = set()
+
+    chunks = re.split(r":|;|,|\(|\)|\bwith\b|\bunder\b|\bfor\b|\bon\b", title or "", flags=re.IGNORECASE)
+    for chunk in chunks:
+        words = [word for word in _tokenize_words(chunk) if word.lower() not in _STOPWORDS]
+        if len(words) < 2:
+            continue
+        for span in (4, 3, 2):
+            for index in range(0, len(words) - span + 1):
+                phrase = " ".join(words[index : index + span])
+                key = phrase.casefold()
+                if key in seen:
+                    continue
+                if not _is_valid_concept_phrase(phrase):
+                    continue
+                seen.add(key)
+                concepts.append(phrase)
+                if len(concepts) >= max_items:
+                    return concepts
+    return concepts
 
 
 def _post_json(url: str, payload: dict[str, object], timeout: int = 20) -> requests.Response:
@@ -23,7 +167,11 @@ def _log_feishu_response(prefix: str, response: requests.Response) -> None:
     print(f"[paper-notifier] {prefix}: status={response.status_code} body={response.text[:200]}")
 
 
-def _parse_llm_concepts(raw: str, max_items: int) -> list[str]:
+def _parse_llm_concepts(
+    raw: str,
+    max_items: int,
+    source_tokens: set[str] | None = None,
+) -> list[str]:
     text = (raw or "").strip()
     if not text:
         return []
@@ -65,6 +213,8 @@ def _parse_llm_concepts(raw: str, max_items: int) -> list[str]:
         cleaned = re.sub(r"\s+", " ", cleaned)
         if len(cleaned) < 4:
             continue
+        if not _is_valid_concept_phrase(cleaned, source_tokens):
+            continue
         key = cleaned.casefold()
         if key in seen:
             continue
@@ -76,7 +226,13 @@ def _parse_llm_concepts(raw: str, max_items: int) -> list[str]:
 
 
 def _llm_concept_keywords(paper: Paper, max_items: int = 5) -> list[str]:
-    if not OPENROUTER_API_KEY:
+    global _KEYWORD_LLM_DISABLED_REASON
+
+    if not KEYWORD_LLM_ENABLED:
+        return []
+    if _KEYWORD_LLM_DISABLED_REASON:
+        return []
+    if not has_active_api_key():
         return []
 
     prompt = (
@@ -87,17 +243,30 @@ def _llm_concept_keywords(paper: Paper, max_items: int = 5) -> list[str]:
         f"Abstract: {paper.abstract}"
     )
     payload = {
-        "model": OPENROUTER_MODEL,
+        "model": get_active_model(),
         "messages": [{"role": "user", "content": prompt}],
         "reasoning": {"enabled": True},
     }
     try:
+        source_tokens = _source_tokens_from_paper(paper)
         body = post_chat_completions(payload, "concept keyword generation")
         message = body.get("choices", [{}])[0].get("message", {})
         content = (message.get("content") or "").strip()
-        return _parse_llm_concepts(content, max_items)
+        return _parse_llm_concepts(content, max_items, source_tokens)
     except Exception as exc:
-        print(f"[paper-notifier] concept keyword generation failed: {exc}")
+        error_text = str(exc)
+        if "status=401" in error_text or "status=403" in error_text:
+            _KEYWORD_LLM_DISABLED_REASON = error_text
+            print(
+                "[paper-notifier] "
+                f"{get_active_provider_name()} concept keyword generation disabled for this run "
+                f"after auth/permission error: {error_text}"
+            )
+            return []
+        print(
+            "[paper-notifier] "
+            f"{get_active_provider_name()} concept keyword generation failed: {error_text}"
+        )
         return []
 
 
@@ -107,7 +276,14 @@ def summarize_keywords_from_paper(paper: Paper, top_n: int = 5) -> str:
     if cached is not None:
         return cached
 
-    concepts = _llm_concept_keywords(paper, max_items=top_n)
+    source_tokens = _source_tokens_from_paper(paper)
+    concepts = [
+        concept
+        for concept in _llm_concept_keywords(paper, max_items=top_n)
+        if _is_valid_concept_phrase(concept, source_tokens)
+    ]
+    if not concepts:
+        concepts = _fallback_concepts_from_title(paper.title, top_n)
     result = ", ".join(concepts) if concepts else "N/A"
     _KEYWORD_CACHE[cache_key] = result
     return result

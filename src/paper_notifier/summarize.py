@@ -11,6 +11,7 @@ from .llm_client import (
     has_active_api_key,
     post_chat_completions,
 )
+from .config import IMPACT_GENERATION_ENABLED, SUMMARY_LLM_ENABLED
 from .models import Paper
 
 
@@ -30,6 +31,12 @@ def _collapse_whitespace(text: str) -> str:
     return " ".join(text.split())
 
 
+def _strip_non_latin_noise(text: str) -> str:
+    cleaned = re.sub(r"[\u4e00-\u9fff\u3040-\u30ff\u0e00-\u0e7f\uac00-\ud7af]+", " ", text)
+    cleaned = re.sub(r"[^A-Za-z0-9\s\.,;:()\[\]/%+\-]", " ", cleaned)
+    return _collapse_whitespace(cleaned)
+
+
 def _strip_leading_noise(text: str) -> str:
     cleaned = text
     for pattern, flags in _LEADING_CLEANUP_PATTERNS:
@@ -40,6 +47,7 @@ def _strip_leading_noise(text: str) -> str:
 def extract_abstract(text: str, limit: int = 380) -> str:
     cleaned = html.unescape(text or "")
     cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+    cleaned = _strip_non_latin_noise(cleaned)
     cleaned = _collapse_whitespace(cleaned)
 
     if re.search(r"\babstract\s*:", cleaned, flags=re.IGNORECASE):
@@ -96,11 +104,64 @@ def _fetch_url_context(url: str, timeout: int = 10) -> str:
 
 def _normalize_summary_text(text: str) -> str:
     cleaned = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    cleaned = re.sub(r"^\s*```[a-zA-Z]*\s*", "", cleaned)
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned)
     cleaned = re.sub(r"\*+", "", cleaned)
     cleaned = re.sub(r"^\s*summary\s*:\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\n{2,}", "\n", cleaned)
-    lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
+    lines = [
+        re.sub(r"^\s*[-*\d\.)]+\s*", "", line).strip()
+        for line in cleaned.split("\n")
+        if line.strip()
+    ]
     return "\n".join(lines).strip()
+
+
+def _is_low_quality_summary(text: str) -> bool:
+    normalized = _collapse_whitespace(text)
+    if not normalized:
+        return True
+    if "```" in normalized:
+        return True
+    if re.match(r"^title\s*:", normalized, flags=re.IGNORECASE):
+        return True
+    if re.match(r"^impact\s*:", normalized, flags=re.IGNORECASE):
+        return True
+    if re.search(r"\be(?:\s+e){3,}\b", normalized, flags=re.IGNORECASE):
+        return True
+    if re.search(r"\b(\w{1,20})(?:\s+\1){3,}\b", normalized, flags=re.IGNORECASE):
+        return True
+
+    letters = sum(1 for ch in normalized if ch.isalpha())
+    if letters / max(1, len(normalized)) < 0.45:
+        return True
+
+    tokens = re.findall(r"\b[\w\-]+\b", normalized.lower())
+    if len(tokens) >= 20:
+        unique_ratio = len(set(tokens)) / len(tokens)
+        if unique_ratio < 0.35:
+            return True
+    return False
+
+
+def _strip_impact_sentence(text: str) -> str:
+    if not text:
+        return ""
+    without_inline = re.sub(r"\s+Impact\s*:\s*[^\n]+", "", text, flags=re.IGNORECASE)
+    without_line = re.sub(r"(?im)^\s*Impact\s*:\s*.*$", "", without_inline)
+    return _normalize_summary_text(without_line)
+
+
+def _truncate_to_sentences(text: str, max_sentences: int = 2, limit: int = 360) -> str:
+    normalized = _collapse_whitespace(text)
+    if not normalized:
+        return ""
+    sentence_parts = re.split(r"(?<=[.!?])\s+", normalized)
+    selected = [part.strip() for part in sentence_parts if part.strip()][:max_sentences]
+    compact = " ".join(selected) if selected else normalized
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3].rstrip() + "..."
 
 
 def _ensure_impact_sentence(summary: str, title: str, venue: str) -> str:
@@ -122,23 +183,39 @@ def _ensure_impact_sentence(summary: str, title: str, venue: str) -> str:
 
 
 def summarize_with_llm(paper: Paper, url_context: str) -> str:
+    if not SUMMARY_LLM_ENABLED:
+        return ""
     if not has_active_api_key():
         return ""
 
     author_text = ", ".join(paper.authors[:8]) if paper.authors else "Unknown authors"
     context_block = f"\nURL content excerpt: {url_context}\n" if url_context else "\nURL content excerpt: (not accessible)\n"
-    prompt = (
-        "You are helping a research digest. Write one concise summary paragraph (40-70 words) "
-        "using the abstract and any accessible URL content excerpt below. "
-        "The summary must end with exactly one sentence that starts with 'Impact:' and states likely impact. "
-        "Do not use markdown bullets or headings. Avoid hype and uncertainty inflation.\n\n"
-        f"Title: {paper.title}\n"
-        f"Authors: {author_text}\n"
-        f"Venue: {paper.source}\n"
-        f"Abstract: {paper.abstract}\n"
-        f"URL: {paper.url}"
-        f"{context_block}"
-    )
+    if IMPACT_GENERATION_ENABLED:
+        prompt = (
+            "You are helping a research digest. Write one concise summary paragraph (40-70 words) "
+            "using the abstract and any accessible URL content excerpt below. "
+            "The summary must end with exactly one sentence that starts with 'Impact:' and states likely impact. "
+            "Do not use markdown bullets or headings. Avoid hype and uncertainty inflation.\n\n"
+            f"Title: {paper.title}\n"
+            f"Authors: {author_text}\n"
+            f"Venue: {paper.source}\n"
+            f"Abstract: {paper.abstract}\n"
+            f"URL: {paper.url}"
+            f"{context_block}"
+        )
+    else:
+        prompt = (
+            "You are helping a research digest. Write one concise summary paragraph (40-70 words) "
+            "using the abstract and any accessible URL content excerpt below. "
+            "Do not add an Impact sentence. Do not use markdown bullets or headings. "
+            "Avoid hype and uncertainty inflation.\n\n"
+            f"Title: {paper.title}\n"
+            f"Authors: {author_text}\n"
+            f"Venue: {paper.source}\n"
+            f"Abstract: {paper.abstract}\n"
+            f"URL: {paper.url}"
+            f"{context_block}"
+        )
 
     payload = {
         "model": get_active_model(),
@@ -154,11 +231,13 @@ def summarize_with_llm(paper: Paper, url_context: str) -> str:
         return ""
 
 
-def _fallback_summary(paper: Paper) -> str:
-    abstract = _collapse_whitespace(paper.abstract)
+def _fallback_summary(paper: Paper, include_impact: bool = True) -> str:
+    abstract = _truncate_to_sentences(_strip_non_latin_noise(paper.abstract))
     if not abstract:
         abstract = "No abstract is available in metadata."
-    return _ensure_impact_sentence(abstract, paper.title, paper.source)
+    if include_impact:
+        return _ensure_impact_sentence(abstract, paper.title, paper.source)
+    return abstract
 
 
 def summarize_papers(papers: list[Paper]) -> list[Paper]:
@@ -166,8 +245,18 @@ def summarize_papers(papers: list[Paper]) -> list[Paper]:
         paper.abstract = extract_abstract(paper.abstract)
         url_context = _fetch_url_context(paper.url)
         generated_summary = summarize_with_llm(paper, url_context)
-        paper.summary = _ensure_impact_sentence(generated_summary, paper.title, paper.source)
-        if not paper.summary:
-            paper.summary = _fallback_summary(paper)
+        if IMPACT_GENERATION_ENABLED:
+            candidate = _ensure_impact_sentence(generated_summary, paper.title, paper.source)
+        else:
+            candidate = _strip_impact_sentence(generated_summary)
+        if not candidate or _is_low_quality_summary(candidate):
+            if candidate:
+                print(
+                    "[paper-notifier] Low-quality LLM summary detected; "
+                    f"using fallback summary for: {paper.title[:80]}"
+                )
+            paper.summary = _fallback_summary(paper, include_impact=IMPACT_GENERATION_ENABLED)
+        else:
+            paper.summary = candidate
     return papers
 

@@ -44,6 +44,9 @@ LLM_RELEVANCE_SCORE_THRESHOLD = parse_float(
 	os.getenv("LLM_RELEVANCE_SCORE_THRESHOLD"),
 	0.7,
 )
+IMPACT_GENERATION_ENABLED = parse_bool(os.getenv("IMPACT_GENERATION_ENABLED"), True)
+SUMMARY_LLM_ENABLED = parse_bool(os.getenv("SUMMARY_LLM_ENABLED"), True)
+KEYWORD_LLM_ENABLED = parse_bool(os.getenv("KEYWORD_LLM_ENABLED"), True)
 
 RSS_FEEDS = [
 	feed.strip()
