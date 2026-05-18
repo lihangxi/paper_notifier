@@ -29,6 +29,9 @@ SILICONFLOW_API_KEY=
 SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
 SILICONFLOW_MODEL=Qwen/Qwen2.5-7B-Instruct
 
+DEEPSEEK_THINKING_ENABLED=true
+DEEPSEEK_REASONING_EFFORT=high
+
 OPENROUTER_TIMEOUT_SECONDS=25
 OPENROUTER_RETRY_LIMIT=10
 OPENROUTER_RETRY_INTERVAL_SECONDS=60
@@ -39,6 +42,7 @@ IMPACT_GENERATION_ENABLED=true
 ```
 
 Set `LLM_PROVIDER=siliconflow` to use SiliconFlow via the OpenAI-compatible API.
+If you use a DeepSeek model on an OpenAI-compatible endpoint, `DEEPSEEK_THINKING_ENABLED` controls thinking mode and `DEEPSEEK_REASONING_EFFORT` supports `high` or `max`.
 
 Recommended Feishu Flow config (single summary field):
 
@@ -103,6 +107,7 @@ python -m paper_notifier.cli --test-flow
 - If `SUMMARY_LLM_ENABLED=true` and provider API key is available, each paper includes an LLM-generated summary using title, authors, abstract, and URL content when accessible.
 - If `KEYWORD_LLM_ENABLED=true` and provider API key is available, each paper includes concept-level `Keywords` generated from title and abstract.
 - If `IMPACT_GENERATION_ENABLED=true`, the summary ends with one sentence prefixed with `Impact:`; if false, no `Impact:` sentence is generated.
+- For DeepSeek models, thinking mode is sent as `extra_body.thinking.type` and effort is sent as `reasoning_effort` (`high`/`max`).
 - LLM requests retry automatically on HTTP `429` up to `OPENROUTER_RETRY_LIMIT` attempts with `OPENROUTER_RETRY_INTERVAL_SECONDS` pause between attempts.
 - Feishu messages now use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries).
 - Abstract text is cleaned to remove common metadata prefixes (for example `Published online` and leading DOI strings).

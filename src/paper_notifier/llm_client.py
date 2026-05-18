@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI
 
 from .config import (
+    DEEPSEEK_REASONING_EFFORT,
+    DEEPSEEK_THINKING_ENABLED,
     LLM_PROVIDER,
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
@@ -64,6 +66,21 @@ def has_active_api_key() -> bool:
     return bool(_resolve_settings().api_key)
 
 
+def _is_deepseek_model(model_name: object) -> bool:
+    if not isinstance(model_name, str):
+        return False
+    return "deepseek" in model_name.lower()
+
+
+def _normalize_effort(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    lowered = value.strip().lower()
+    if lowered in {"high", "max"}:
+        return lowered
+    return ""
+
+
 def post_chat_completions(payload: dict[str, object], request_name: str) -> dict[str, object]:
     settings = _resolve_settings()
     if not settings.api_key:
@@ -75,8 +92,29 @@ def post_chat_completions(payload: dict[str, object], request_name: str) -> dict
 
     request_payload = dict(payload)
     request_payload["model"] = request_payload.get("model") or settings.model
-    # Keep request body OpenAI-compatible for providers that do not accept custom OpenRouter-only params.
-    request_payload.pop("reasoning", None)
+
+    # Map legacy reasoning payload to DeepSeek thinking-mode request fields.
+    reasoning_payload = request_payload.pop("reasoning", None)
+    if _is_deepseek_model(request_payload.get("model")):
+        thinking_enabled = DEEPSEEK_THINKING_ENABLED
+        reasoning_effort = _normalize_effort(DEEPSEEK_REASONING_EFFORT)
+
+        if isinstance(reasoning_payload, dict):
+            if "enabled" in reasoning_payload:
+                thinking_enabled = bool(reasoning_payload.get("enabled"))
+            effort_override = _normalize_effort(reasoning_payload.get("effort"))
+            if effort_override:
+                reasoning_effort = effort_override
+
+        extra_body = request_payload.get("extra_body")
+        if not isinstance(extra_body, dict):
+            extra_body = {}
+        extra_body["thinking"] = {
+            "type": "enabled" if thinking_enabled else "disabled",
+        }
+        request_payload["extra_body"] = extra_body
+        if reasoning_effort:
+            request_payload["reasoning_effort"] = reasoning_effort
 
     client = OpenAI(
         api_key=settings.api_key,
