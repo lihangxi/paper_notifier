@@ -13,9 +13,6 @@ from .config import (
     OPENROUTER_RETRY_INTERVAL_SECONDS,
     OPENROUTER_RETRY_LIMIT,
     OPENROUTER_TIMEOUT_SECONDS,
-    SILICONFLOW_API_KEY,
-    SILICONFLOW_BASE_URL,
-    SILICONFLOW_MODEL,
 )
 
 
@@ -31,25 +28,16 @@ class LlmSettings:
 
 def _resolve_settings() -> LlmSettings:
     provider = LLM_PROVIDER.strip().lower()
-    if provider == "siliconflow":
-        return LlmSettings(
-            provider="siliconflow",
-            display_name="SiliconFlow",
-            api_key=SILICONFLOW_API_KEY,
-            api_key_env="SILICONFLOW_API_KEY",
-            base_url=SILICONFLOW_BASE_URL,
-            model=SILICONFLOW_MODEL,
-        )
-    if provider == "openrouter":
-        return LlmSettings(
-            provider="openrouter",
-            display_name="OpenRouter",
-            api_key=OPENROUTER_API_KEY,
-            api_key_env="OPENROUTER_API_KEY",
-            base_url=OPENROUTER_BASE_URL,
-            model=OPENROUTER_MODEL,
-        )
-    raise RuntimeError("LLM_PROVIDER must be one of: openrouter, siliconflow")
+    if provider not in ("", "openrouter"):
+        raise RuntimeError("LLM_PROVIDER must be 'openrouter' (or unset)")
+    return LlmSettings(
+        provider="openrouter",
+        display_name="OpenRouter",
+        api_key=OPENROUTER_API_KEY,
+        api_key_env="OPENROUTER_API_KEY",
+        base_url=OPENROUTER_BASE_URL,
+        model=OPENROUTER_MODEL,
+    )
 
 
 def get_active_provider_name() -> str:

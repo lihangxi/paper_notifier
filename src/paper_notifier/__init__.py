@@ -1,1 +1,1 @@
-"""Feishu paper notifier."""
+"""Slack paper notifier."""

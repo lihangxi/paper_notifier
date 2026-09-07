@@ -1,6 +1,6 @@
-# Feishu Paper Notifier
+# Slack Paper Notifier
 
-Daily bot that searches for new papers (arXiv, Crossref, Semantic Scholar, and RSS feeds) and posts a summary to a Feishu webhook.
+Daily bot that searches for new papers (arXiv, Crossref, Semantic Scholar, and RSS feeds) and posts a summary to a Slack channel via a Slack app (Web API `chat.postMessage`).
 
 ## Setup
 
@@ -12,7 +12,11 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-3) Copy `.env.example` to `.env` and fill in your configuration values (especially `FEISHU_WEBHOOK_URL`).
+3) Set up a Slack app and bot token (this replaces the deprecated legacy Incoming Webhooks custom integration):
+   1. Go to https://api.slack.com/apps → **Create New App** → *From scratch*, pick a name and workspace.
+   2. Under **OAuth & Permissions → Scopes → Bot Token Scopes**, add `chat:write` (add `chat:write.public` if you want to post to public channels without adding the bot to each one).
+   3. Under **OAuth & Permissions**, click **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-…`).
+   4. Copy `.env.example` to `.env` and set `SLACK_BOT_TOKEN` to that token and `SLACK_CHANNEL` to the target channel (e.g. `#paper-notifications` or a channel ID like `C123ABC456`). Invite the bot to the channel with `/invite @your-app`.
 4) (Optional) Create a `keywords.txt` file to filter papers by author, title, or abstract patterns. Use sections `AUTHOR`, `TITLE`, `ABSTRACT` with regex or wildcard patterns (one per line).
 5) (Optional) Configure an LLM provider to generate a summary for each paper (using abstract + accessible URL content), with a one-sentence impact line at the end.
 
@@ -23,26 +27,14 @@ LLM_PROVIDER=openrouter
 
 OPENROUTER_API_KEY=
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_MODEL=openrouter/free
-
-SILICONFLOW_API_KEY=
-SILICONFLOW_BASE_URL=https://api.siliconflow.cn/v1
-SILICONFLOW_MODEL=Qwen/Qwen2.5-7B-Instruct
+OPENROUTER_MODEL=minimax/minimax-m3:free
 
 OPENROUTER_TIMEOUT_SECONDS=25
 OPENROUTER_RETRY_LIMIT=10
 OPENROUTER_RETRY_INTERVAL_SECONDS=60
 ```
 
-Set `LLM_PROVIDER=siliconflow` to use SiliconFlow via the OpenAI-compatible API.
-
-Recommended Feishu Flow config (single summary field):
-
-```dotenv
-FEISHU_WEBHOOK_TYPE=flow
-FLOW_SINGLE_SUMMARY=true
-FLOW_FIELD_DESCRIPTION=summary
-```
+LLM requests go through OpenRouter (OpenAI-compatible API). The default free model is `minimax/minimax-m3:free`; set `OPENROUTER_MODEL` to any OpenRouter model slug. Only `LLM_PROVIDER=openrouter` is supported.
 
 **Note:** `.env`, `keywords.txt`, and `logs/` are user-specific and excluded from git (see `.gitignore`). They will not be committed to the repository.
 
@@ -68,10 +60,10 @@ python -m paper_notifier.cli --schedule
 
 When schedule mode starts, the app prints scheduler status and the next run time.
 
-Send one Feishu Flow test payload using your configured flow mode/fields:
+Send one Slack test message to verify your token and channel:
 
 ```bash
-python -m paper_notifier.cli --test-flow
+python -m paper_notifier.cli --test
 ```
 
 ## VS Code
@@ -92,14 +84,12 @@ python -m paper_notifier.cli --test-flow
 - To add journal feeds, set `RSS_FEEDS` as a comma-separated list of RSS URLs.
 - Within a single run, papers are deduplicated by normalized URL/DOI/title before keyword and relevance filters.
 - If you see occasional APScheduler "run time ... was missed" warnings near startup, increase `SCHEDULER_MISFIRE_GRACE_SECONDS` (default `60`).
-- For Feishu Flow webhooks, set `FEISHU_WEBHOOK_TYPE=flow` and configure `FLOW_FIELD_DESCRIPTION`.
-- If `FLOW_SINGLE_SUMMARY=true`, only `FLOW_FIELD_DESCRIPTION` is used.
-- If `FLOW_SINGLE_SUMMARY=false`, `FLOW_FIELD_TITLE`, `FLOW_FIELD_AUTHORS`, and `FLOW_FIELD_DESCRIPTION` are all used (one payload per paper).
+- Messages are posted with the Slack Web API `chat.postMessage` using `SLACK_BOT_TOKEN` (a bot token with `chat:write`) to `SLACK_CHANNEL`. Optional `SLACK_USERNAME` and `SLACK_ICON_EMOJI` override the bot display name and icon per message.
 - Each paper message includes a `Keywords` entry generated as concept-level phrases from title and abstract when the configured provider API key is set.
-- If no papers match current filters, the notifier still sends a Feishu message indicating zero matched papers.
+- If no papers match current filters, the notifier still sends a Slack message indicating zero matched papers.
 - If the configured provider API key is available, each paper includes an LLM-generated summary using title, authors, abstract, and URL content when accessible.
 - LLM requests retry automatically on HTTP `429` up to `OPENROUTER_RETRY_LIMIT` attempts with `OPENROUTER_RETRY_INTERVAL_SECONDS` pause between attempts.
-- Feishu messages now use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries).
+- Slack messages use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries) and are split across multiple posts only when they would exceed Slack's message size limit.
 - The summary ends with exactly one sentence prefixed with `Impact:`.
 - Abstract text is cleaned to remove common metadata prefixes (for example `Published online` and leading DOI strings).
 - On LLM API failure or missing key, the notifier falls back to abstract-based summary plus a heuristic impact sentence.

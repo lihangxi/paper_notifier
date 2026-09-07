@@ -4,11 +4,14 @@ import os
 
 from dotenv import load_dotenv
 
-from .utils import parse_bool, parse_float, parse_int
+from .utils import parse_float, parse_int
 
 load_dotenv()
 
-FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "").strip()
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
+SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "").strip()
+SLACK_USERNAME = os.getenv("SLACK_USERNAME", "").strip()
+SLACK_ICON_EMOJI = os.getenv("SLACK_ICON_EMOJI", "").strip()
 QUERY = os.getenv("QUERY", "quantum computing").strip()
 MAX_PAPERS = parse_int(os.getenv("MAX_PAPERS"), 8)
 DAYS_BACK = parse_int(os.getenv("DAYS_BACK"), 1)
@@ -32,10 +35,7 @@ SEMANTIC_SCHOLAR_LIMIT = parse_int(os.getenv("SEMANTIC_SCHOLAR_LIMIT"), 20)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower() or "openrouter"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free").strip() or "openrouter/free"
-SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY", "").strip()
-SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1").strip()
-SILICONFLOW_MODEL = os.getenv("SILICONFLOW_MODEL", "Qwen/Qwen2.5-7B-Instruct").strip() or "Qwen/Qwen2.5-7B-Instruct"
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "minimax/minimax-m3:free").strip() or "minimax/minimax-m3:free"
 OPENROUTER_TIMEOUT_SECONDS = parse_int(os.getenv("OPENROUTER_TIMEOUT_SECONDS"), 25)
 OPENROUTER_RETRY_LIMIT = parse_int(os.getenv("OPENROUTER_RETRY_LIMIT"), 10)
 OPENROUTER_RETRY_INTERVAL_SECONDS = parse_int(os.getenv("OPENROUTER_RETRY_INTERVAL_SECONDS"), 60)
@@ -50,8 +50,3 @@ RSS_FEEDS = [
 	for feed in os.getenv("RSS_FEEDS", "").split(",")
 	if feed.strip()
 ]
-FEISHU_WEBHOOK_TYPE = os.getenv("FEISHU_WEBHOOK_TYPE", "bot").strip().lower()
-FLOW_FIELD_TITLE = os.getenv("FLOW_FIELD_TITLE", "paper_title").strip() or "paper_title"
-FLOW_FIELD_AUTHORS = os.getenv("FLOW_FIELD_AUTHORS", "authors").strip() or "authors"
-FLOW_FIELD_DESCRIPTION = os.getenv("FLOW_FIELD_DESCRIPTION", "summary").strip() or "summary"
-FLOW_SINGLE_SUMMARY = parse_bool(os.getenv("FLOW_SINGLE_SUMMARY"), True)

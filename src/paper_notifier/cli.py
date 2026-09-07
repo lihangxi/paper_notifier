@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
@@ -11,12 +10,6 @@ from .config import (
     CROSSREF_MAILTO,
     CROSSREF_ROWS,
     DAYS_BACK,
-    FEISHU_WEBHOOK_URL,
-    FEISHU_WEBHOOK_TYPE,
-    FLOW_FIELD_AUTHORS,
-    FLOW_FIELD_DESCRIPTION,
-    FLOW_FIELD_TITLE,
-    FLOW_SINGLE_SUMMARY,
     KEYWORDS_FILE,
     LLM_RELEVANCE_SCORE_THRESHOLD,
     LLM_RELEVANCE_TOPIC,
@@ -27,8 +20,10 @@ from .config import (
     RSS_FEEDS,
     SEMANTIC_SCHOLAR_API_KEY,
     SEMANTIC_SCHOLAR_LIMIT,
+    SLACK_BOT_TOKEN,
+    SLACK_CHANNEL,
 )
-from .feishu import post_no_match_to_feishu, post_to_feishu
+from .slack import post_no_match_to_slack, post_test_to_slack, post_to_slack
 from .keywords import filter_papers_by_keywords, load_keyword_rules
 from .llm_client import (
     get_active_model,
@@ -200,10 +195,16 @@ def apply_runtime_filters(papers: list[Paper], include_sent_papers: bool) -> lis
     return papers
 
 
+def _require_slack_config() -> None:
+    if not SLACK_BOT_TOKEN:
+        raise SystemExit("SLACK_BOT_TOKEN is required")
+    if not SLACK_CHANNEL:
+        raise SystemExit("SLACK_CHANNEL is required")
+
+
 def run_once(include_sent_papers: bool = False) -> None:
     print(f"[paper-notifier] run started at {utc_now().isoformat()}")
-    if not FEISHU_WEBHOOK_URL:
-        raise SystemExit("FEISHU_WEBHOOK_URL is required")
+    _require_slack_config()
 
     papers = fetch_all_papers()
 
@@ -217,58 +218,23 @@ def run_once(include_sent_papers: bool = False) -> None:
     papers = apply_runtime_filters(papers, include_sent_papers)
 
     if not papers:
-        print("[paper-notifier] no papers matched; sending no-match notification to Feishu")
-        post_no_match_to_feishu(
-            FEISHU_WEBHOOK_URL,
-            FEISHU_WEBHOOK_TYPE,
-            FLOW_FIELD_TITLE,
-            FLOW_FIELD_AUTHORS,
-            FLOW_FIELD_DESCRIPTION,
-            FLOW_SINGLE_SUMMARY,
-        )
+        print("[paper-notifier] no papers matched; sending no-match notification to Slack")
+        post_no_match_to_slack(SLACK_BOT_TOKEN, SLACK_CHANNEL)
         return
 
     papers = summarize_papers(papers)
     write_log(papers)
-    print(f"[paper-notifier] posting {len(papers)} papers to Feishu (type={FEISHU_WEBHOOK_TYPE})")
-    post_to_feishu(
-        FEISHU_WEBHOOK_URL,
-        papers,
-        FEISHU_WEBHOOK_TYPE,
-        FLOW_FIELD_TITLE,
-        FLOW_FIELD_AUTHORS,
-        FLOW_FIELD_DESCRIPTION,
-        FLOW_SINGLE_SUMMARY,
-    )
-    print("[paper-notifier] Feishu post completed")
+    print(f"[paper-notifier] posting {len(papers)} papers to Slack (channel={SLACK_CHANNEL})")
+    post_to_slack(SLACK_BOT_TOKEN, SLACK_CHANNEL, papers)
+    print("[paper-notifier] Slack post completed")
 
 
-def run_test_flow() -> None:
-    print(f"[paper-notifier] flow test started at {utc_now().isoformat()}")
-    if not FEISHU_WEBHOOK_URL:
-        raise SystemExit("FEISHU_WEBHOOK_URL is required")
-    if FEISHU_WEBHOOK_TYPE != "flow":
-        raise SystemExit("--test-flow requires FEISHU_WEBHOOK_TYPE=flow")
+def run_test_slack() -> None:
+    print(f"[paper-notifier] slack test started at {utc_now().isoformat()}")
+    _require_slack_config()
 
-    test_paper = Paper(
-        title="paper test",
-        authors=["paper-notifier"],
-        abstract="abstract test",
-        summary="",
-        url="https://example.com/paper-test",
-        source="paper-notifier",
-        published=datetime.now(timezone.utc),
-    )
-    post_to_feishu(
-        FEISHU_WEBHOOK_URL,
-        [test_paper],
-        FEISHU_WEBHOOK_TYPE,
-        FLOW_FIELD_TITLE,
-        FLOW_FIELD_AUTHORS,
-        FLOW_FIELD_DESCRIPTION,
-        FLOW_SINGLE_SUMMARY,
-    )
-    print("[paper-notifier] flow test post completed")
+    post_test_to_slack(SLACK_BOT_TOKEN, SLACK_CHANNEL)
+    print("[paper-notifier] slack test post completed")
 
 
 def filter_papers_by_research_field(papers: list[Paper], field_terms: list[str]) -> list[Paper]:
@@ -420,10 +386,10 @@ def write_log(papers) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Feishu paper notifier")
+    parser = argparse.ArgumentParser(description="Slack paper notifier")
     parser.add_argument("--once", action="store_true", help="run once and exit")
     parser.add_argument("--schedule", action="store_true", help="run daily on schedule")
-    parser.add_argument("--test-flow", action="store_true", help="send one minimal flow payload and exit")
+    parser.add_argument("--test", action="store_true", help="send one Slack test message and exit")
     parser.add_argument(
         "--include-sent-papers",
         action="store_true",
@@ -431,8 +397,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.test_flow:
-        run_test_flow()
+    if args.test:
+        run_test_slack()
     elif args.schedule:
         schedule_daily(lambda: run_once(include_sent_papers=args.include_sent_papers))
     else:
