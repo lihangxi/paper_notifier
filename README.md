@@ -69,6 +69,8 @@ python -m paper_notifier.cli --schedule
 
 When schedule mode starts, the app prints scheduler status and the next run time.
 
+On Windows you can double-click `run_scheduler.bat` to start the scheduler in a console window (it keeps running and shows logs; close the window to stop).
+
 Send one Slack test message to verify your token and channel:
 
 ```bash
