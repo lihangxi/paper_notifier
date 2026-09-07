@@ -41,11 +41,31 @@ from .summarize import summarize_papers
 from .utils import utc_now
 
 
+def _project_root() -> Path:
+    module_path = Path(__file__).resolve()
+    for parent in module_path.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return module_path.parents[2]
+
+
+def _resolve_runtime_path(value: str) -> Path:
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return candidate
+
+    cwd_candidate = Path.cwd() / candidate
+    if cwd_candidate.exists():
+        return cwd_candidate
+
+    return _project_root() / candidate
+
+
 def load_logged_paper_urls(log_file: str) -> set[str]:
     if not log_file:
         return set()
 
-    path = Path(log_file)
+    path = _resolve_runtime_path(log_file)
     if not path.exists():
         return set()
 
@@ -151,14 +171,17 @@ def fetch_all_papers() -> list[Paper]:
 
 
 def apply_runtime_filters(papers: list[Paper], include_sent_papers: bool) -> list[Paper]:
-    keyword_rules = load_keyword_rules(KEYWORDS_FILE)
+    keyword_file_path = _resolve_runtime_path(KEYWORDS_FILE)
+    keyword_rules = load_keyword_rules(str(keyword_file_path))
     if keyword_rules.has_rules():
         before_keywords = len(papers)
         papers = filter_papers_by_keywords(papers, keyword_rules)
         print(
-            f"[paper-notifier] papers after keywords filter ({KEYWORDS_FILE}, {keyword_rules.keyword_count} keywords): "
+            f"[paper-notifier] papers after keywords filter ({keyword_file_path}, {keyword_rules.keyword_count} keywords): "
             f"{len(papers)} / {before_keywords}"
         )
+    else:
+        print(f"[paper-notifier] keyword filter skipped (no rules found in {keyword_file_path})")
 
     if include_sent_papers:
         print("[paper-notifier] sent-paper filter bypassed via --include-sent-papers")
@@ -174,16 +197,26 @@ def apply_runtime_filters(papers: list[Paper], include_sent_papers: bool) -> lis
 
     before_relevance_filter = len(papers)
     try:
-        papers = filter_papers_by_llm_relevance(
+        papers, unresolved = filter_papers_by_llm_relevance(
             papers,
             LLM_RELEVANCE_TOPIC,
             LLM_RELEVANCE_SCORE_THRESHOLD,
+            max_attempts=5,
         )
+        resolved_count = before_relevance_filter - len(unresolved)
         print(
             "[paper-notifier] papers after LLM relevance filter "
             f"(topic={LLM_RELEVANCE_TOPIC}, threshold={LLM_RELEVANCE_SCORE_THRESHOLD:.2f}): "
-            f"{len(papers)} / {before_relevance_filter}"
+            f"{len(papers)} / {before_relevance_filter} "
+            f"(llm_resolved={resolved_count}, llm_unresolved={len(unresolved)})"
         )
+        if unresolved:
+            fallback_matched = filter_papers_by_research_field(unresolved, RESEARCH_FIELD_TERMS)
+            papers.extend(fallback_matched)
+            print(
+                "[paper-notifier] fallback term relevance filter "
+                f"({len(RESEARCH_FIELD_TERMS)} terms): {len(fallback_matched)} / {len(unresolved)}"
+            )
     except RuntimeError as exc:
         print(f"[paper-notifier] LLM relevance filter failed: {exc}")
         papers = filter_papers_by_research_field(papers, RESEARCH_FIELD_TERMS)
@@ -213,7 +246,7 @@ def run_once(include_sent_papers: bool = False) -> None:
     if len(papers) != fetched_count:
         print(f"[paper-notifier] papers after same-run dedup: {len(papers)} / {fetched_count}")
 
-    print(f"[paper-notifier] fetched papers before author filter: {len(papers)}")
+    print(f"[paper-notifier] fetched papers before filters: {len(papers)}")
 
     papers = apply_runtime_filters(papers, include_sent_papers)
 
@@ -252,50 +285,116 @@ def filter_papers_by_llm_relevance(
     papers: list[Paper],
     topic: str,
     threshold: float,
-) -> list[Paper]:
+    max_attempts: int = 5,
+) -> tuple[list[Paper], list[Paper]]:
     if not papers:
-        return papers
+        return papers, []
     if not has_active_api_key():
         raise RuntimeError(f"missing API key for provider {get_active_provider_name()}")
 
-    scores = _llm_relevance_scores(papers, topic)
-    if len(scores) != len(papers):
-        raise RuntimeError(
-            f"invalid score count from LLM (expected={len(papers)}, got={len(scores)})"
-        )
+    evaluated, unresolved = _llm_relevance_scores(papers, topic, max_attempts=max_attempts)
 
     effective_threshold = max(0.0, min(1.0, threshold))
     filtered: list[Paper] = []
-    for paper, score in zip(papers, scores):
+    for paper, score in evaluated:
         if score >= effective_threshold:
             filtered.append(paper)
-    return filtered
+    return filtered, unresolved
 
 
-def _llm_relevance_scores(papers: list[Paper], topic: str) -> list[float]:
-    payload = {
-        "model": get_active_model(),
-        "messages": [{"role": "user", "content": _build_relevance_prompt(papers, topic)}],
-    }
-    body = post_chat_completions(payload, "relevance filter")
-
-    message = body.get("choices", [{}])[0].get("message", {})
-    content = (message.get("content") or "").strip()
-    if not content:
-        raise RuntimeError(f"{get_active_provider_name()} returned empty relevance response")
-
-    scores = _parse_relevance_scores(content)
-    return [max(0.0, min(1.0, score)) for score in scores]
+_LLM_RELEVANCE_BATCH_SIZE = 50
 
 
-def _build_relevance_prompt(papers: list[Paper], topic: str) -> str:
+def _llm_relevance_scores(
+    papers: list[Paper],
+    topic: str,
+    max_attempts: int = 5,
+) -> tuple[list[tuple[Paper, float]], list[Paper]]:
+    if max_attempts < 1:
+        max_attempts = 1
+
+    evaluated: list[tuple[Paper, float]] = []
+    unresolved: list[Paper] = []
+    for batch_start in range(0, len(papers), _LLM_RELEVANCE_BATCH_SIZE):
+        batch = papers[batch_start : batch_start + _LLM_RELEVANCE_BATCH_SIZE]
+        batch_evaluated, batch_unresolved = _llm_relevance_scores_for_batch(
+            batch,
+            topic,
+            batch_start // _LLM_RELEVANCE_BATCH_SIZE + 1,
+            max_attempts,
+        )
+        evaluated.extend(batch_evaluated)
+        unresolved.extend(batch_unresolved)
+    return evaluated, unresolved
+
+
+def _llm_relevance_scores_for_batch(
+    batch: list[Paper],
+    topic: str,
+    batch_number: int,
+    max_attempts: int,
+) -> tuple[list[tuple[Paper, float]], list[Paper]]:
+    remaining: list[tuple[str, Paper]] = [
+        (f"P{index}", paper) for index, paper in enumerate(batch, start=1)
+    ]
+    evaluated: list[tuple[Paper, float]] = []
+
+    for attempt in range(1, max_attempts + 1):
+        if not remaining:
+            break
+
+        payload = {
+            "model": get_active_model(),
+            "messages": [{"role": "user", "content": _build_relevance_prompt(remaining, topic)}],
+        }
+
+        try:
+            body = post_chat_completions(payload, "relevance filter")
+            message = body.get("choices", [{}])[0].get("message", {})
+            content = (message.get("content") or "").strip()
+            if not content:
+                raise RuntimeError(f"{get_active_provider_name()} returned empty relevance response")
+
+            scores_by_id = _parse_relevance_scores(content, [paper_id for paper_id, _ in remaining])
+        except RuntimeError as exc:
+            print(
+                "[paper-notifier] LLM relevance batch retry "
+                f"(batch={batch_number}, attempt={attempt}/{max_attempts}) failed: {exc}"
+            )
+            continue
+
+        if not scores_by_id:
+            print(
+                "[paper-notifier] LLM relevance batch retry "
+                f"(batch={batch_number}, attempt={attempt}/{max_attempts}) returned no matched IDs"
+            )
+            continue
+
+        matched_ids = set(scores_by_id.keys())
+        if len(matched_ids) != len(remaining):
+            print(
+                "[paper-notifier] LLM relevance partial ID score set "
+                f"(batch={batch_number}, attempt={attempt}/{max_attempts}, "
+                f"expected={len(remaining)}, got={len(matched_ids)})"
+            )
+        for paper_id, paper in remaining:
+            score = scores_by_id.get(paper_id)
+            if score is not None:
+                evaluated.append((paper, score))
+
+        remaining = [(paper_id, paper) for paper_id, paper in remaining if paper_id not in matched_ids]
+
+    return evaluated, [paper for _, paper in remaining]
+
+
+def _build_relevance_prompt(papers: list[tuple[str, Paper]], topic: str) -> str:
     paper_lines: list[str] = []
-    for idx, paper in enumerate(papers, start=1):
+    for paper_id, paper in papers:
         abstract = (paper.abstract or "").replace("\n", " ").strip()
         if len(abstract) > 700:
             abstract = abstract[:700] + "..."
         paper_lines.append(
-            f"{idx}. title: {paper.title}\n"
+            f"{paper_id}. title: {paper.title}\n"
             f"   source: {paper.source}\n"
             f"   abstract: {abstract}"
         )
@@ -303,15 +402,15 @@ def _build_relevance_prompt(papers: list[Paper], topic: str) -> str:
     joined = "\n".join(paper_lines)
     return (
         "Score each paper for semantic relevance to the target research topic. "
-        "Return only JSON with this shape: {\"scores\": [0.0, 0.0, ...]}. "
-        "The array length must equal the number of papers and keep the same order. "
-        "Each score must be a float from 0.0 to 1.0. No markdown, no explanations.\n\n"
+        "Return only JSON with this shape: {\"scores\": [{\"id\": \"P1\", \"score\": 0.0}, ...]}. "
+        "Each id must match a provided paper id exactly and each score must be a float from 0.0 to 1.0. "
+        "Do not include papers not listed. No markdown, no explanations.\n\n"
         f"Target topic: {topic}\n\n"
         f"Papers:\n{joined}"
     )
 
 
-def _parse_relevance_scores(content: str) -> list[float]:
+def _parse_relevance_scores(content: str, expected_ids: list[str]) -> dict[str, float]:
     raw = content.strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```[a-zA-Z]*\s*", "", raw)
@@ -325,10 +424,36 @@ def _parse_relevance_scores(content: str) -> list[float]:
     if not isinstance(scores, list):
         raise RuntimeError("LLM relevance response missing 'scores' list")
 
-    try:
-        return [float(score) for score in scores]
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("LLM relevance scores must be numeric") from exc
+    expected_id_set = set(expected_ids)
+    scores_by_id: dict[str, float] = {}
+
+    if scores and isinstance(scores[0], (int, float, str)):
+        numeric_scores: list[float] = []
+        try:
+            numeric_scores = [float(score) for score in scores]
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("LLM relevance scores must be numeric") from exc
+
+        for paper_id, score in zip(expected_ids, numeric_scores):
+            scores_by_id[paper_id] = max(0.0, min(1.0, score))
+        return scores_by_id
+
+    for entry in scores:
+        if not isinstance(entry, dict):
+            continue
+        raw_id = entry.get("id")
+        raw_score = entry.get("score")
+        if not isinstance(raw_id, str):
+            continue
+        if raw_id not in expected_id_set:
+            continue
+        try:
+            score = float(raw_score)
+        except (TypeError, ValueError):
+            continue
+        scores_by_id[raw_id] = max(0.0, min(1.0, score))
+
+    return scores_by_id
 
 
 def _load_json_with_fallback(raw: str) -> dict | list:
@@ -367,7 +492,7 @@ def write_log(papers) -> None:
     if not LOG_FILE:
         return
 
-    path = Path(LOG_FILE)
+    path = _resolve_runtime_path(LOG_FILE)
     if path.parent:
         path.parent.mkdir(parents=True, exist_ok=True)
 

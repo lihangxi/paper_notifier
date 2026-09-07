@@ -4,7 +4,7 @@ import os
 
 from dotenv import load_dotenv
 
-from .utils import parse_float, parse_int
+from .utils import parse_bool, parse_float, parse_int
 
 load_dotenv()
 
@@ -36,6 +36,8 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower() or "openr
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "minimax/minimax-m3:free").strip() or "minimax/minimax-m3:free"
+DEEPSEEK_THINKING_ENABLED = parse_bool(os.getenv("DEEPSEEK_THINKING_ENABLED"), True)
+DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "high").strip().lower()
 OPENROUTER_TIMEOUT_SECONDS = parse_int(os.getenv("OPENROUTER_TIMEOUT_SECONDS"), 25)
 OPENROUTER_RETRY_LIMIT = parse_int(os.getenv("OPENROUTER_RETRY_LIMIT"), 10)
 OPENROUTER_RETRY_INTERVAL_SECONDS = parse_int(os.getenv("OPENROUTER_RETRY_INTERVAL_SECONDS"), 60)
@@ -44,6 +46,9 @@ LLM_RELEVANCE_SCORE_THRESHOLD = parse_float(
 	os.getenv("LLM_RELEVANCE_SCORE_THRESHOLD"),
 	0.7,
 )
+IMPACT_GENERATION_ENABLED = parse_bool(os.getenv("IMPACT_GENERATION_ENABLED"), True)
+SUMMARY_LLM_ENABLED = parse_bool(os.getenv("SUMMARY_LLM_ENABLED"), True)
+KEYWORD_LLM_ENABLED = parse_bool(os.getenv("KEYWORD_LLM_ENABLED"), True)
 
 RSS_FEEDS = [
 	feed.strip()

@@ -18,7 +18,7 @@ pip install -e .
    3. Under **OAuth & Permissions**, click **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-…`).
    4. Copy `.env.example` to `.env` and set `SLACK_BOT_TOKEN` to that token and `SLACK_CHANNEL` to the target channel (e.g. `#paper-notifications` or a channel ID like `C123ABC456`). Invite the bot to the channel with `/invite @your-app`.
 4) (Optional) Create a `keywords.txt` file to filter papers by author, title, or abstract patterns. Use sections `AUTHOR`, `TITLE`, `ABSTRACT` with regex or wildcard patterns (one per line).
-5) (Optional) Configure an LLM provider to generate a summary for each paper (using abstract + accessible URL content), with a one-sentence impact line at the end.
+5) (Optional) Configure an LLM provider to generate paper summaries and concept keywords (both can be enabled/disabled via env toggles).
 
 LLM provider options:
 
@@ -29,12 +29,21 @@ OPENROUTER_API_KEY=
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_MODEL=minimax/minimax-m3:free
 
+DEEPSEEK_THINKING_ENABLED=true
+DEEPSEEK_REASONING_EFFORT=high
+
 OPENROUTER_TIMEOUT_SECONDS=25
 OPENROUTER_RETRY_LIMIT=10
 OPENROUTER_RETRY_INTERVAL_SECONDS=60
+
+SUMMARY_LLM_ENABLED=true
+KEYWORD_LLM_ENABLED=true
+IMPACT_GENERATION_ENABLED=true
 ```
 
 LLM requests go through OpenRouter (OpenAI-compatible API). The default free model is `minimax/minimax-m3:free`; set `OPENROUTER_MODEL` to any OpenRouter model slug. Only `LLM_PROVIDER=openrouter` is supported.
+
+If you use a DeepSeek model via OpenRouter, `DEEPSEEK_THINKING_ENABLED` controls thinking mode and `DEEPSEEK_REASONING_EFFORT` supports `high` or `max`.
 
 **Note:** `.env`, `keywords.txt`, and `logs/` are user-specific and excluded from git (see `.gitignore`). They will not be committed to the repository.
 
@@ -85,11 +94,13 @@ python -m paper_notifier.cli --test
 - Within a single run, papers are deduplicated by normalized URL/DOI/title before keyword and relevance filters.
 - If you see occasional APScheduler "run time ... was missed" warnings near startup, increase `SCHEDULER_MISFIRE_GRACE_SECONDS` (default `60`).
 - Messages are posted with the Slack Web API `chat.postMessage` using `SLACK_BOT_TOKEN` (a bot token with `chat:write`) to `SLACK_CHANNEL`. Optional `SLACK_USERNAME` and `SLACK_ICON_EMOJI` override the bot display name and icon per message.
-- Each paper message includes a `Keywords` entry generated as concept-level phrases from title and abstract when the configured provider API key is set.
 - If no papers match current filters, the notifier still sends a Slack message indicating zero matched papers.
-- If the configured provider API key is available, each paper includes an LLM-generated summary using title, authors, abstract, and URL content when accessible.
+- If `SUMMARY_LLM_ENABLED=true` and the provider API key is available, each paper includes an LLM-generated summary using title, authors, abstract, and URL content when accessible.
+- If `KEYWORD_LLM_ENABLED=true` and the provider API key is available, each paper includes concept-level `Keywords` generated from title and abstract.
+- If `IMPACT_GENERATION_ENABLED=true`, the summary ends with one sentence prefixed with `Impact:`; if false, no `Impact:` sentence is generated.
+- For DeepSeek models, thinking mode is sent as `extra_body.thinking.type` and effort is sent as `reasoning_effort` (`high`/`max`).
+- Slack messages use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries), do not show URL preview cards, and are split across multiple posts only when they would exceed Slack's message size limit.
 - LLM requests retry automatically on HTTP `429` up to `OPENROUTER_RETRY_LIMIT` attempts with `OPENROUTER_RETRY_INTERVAL_SECONDS` pause between attempts.
-- Slack messages use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries) and are split across multiple posts only when they would exceed Slack's message size limit.
-- The summary ends with exactly one sentence prefixed with `Impact:`.
 - Abstract text is cleaned to remove common metadata prefixes (for example `Published online` and leading DOI strings).
-- On LLM API failure or missing key, the notifier falls back to abstract-based summary plus a heuristic impact sentence.
+- On summary LLM failure (or if disabled), the notifier falls back to abstract-based summary content.
+- On keyword LLM failure (or if disabled), the notifier falls back to deterministic title-based concept phrases.
