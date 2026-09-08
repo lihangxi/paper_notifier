@@ -16,6 +16,14 @@ dependencies = [
     "requests==2.32.3",
 ]
 
+[project.optional-dependencies]
+# Knowledge-base relevance against a Zotero library (local open-source models).
+# Install with: pip install -e ".[kb]"
+kb = [
+    "numpy>=1.24.0",
+    "sentence-transformers>=2.7.0",
+]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

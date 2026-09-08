@@ -10,7 +10,16 @@ from .config import (
     CROSSREF_MAILTO,
     CROSSREF_ROWS,
     DAYS_BACK,
+    KB_BATCH_SIZE,
+    KB_DEVICE,
+    KB_EMBEDDING_MODEL,
+    KB_RERANKER_ENABLED,
+    KB_RERANKER_MODEL,
+    KB_RELEVANCE_ENABLED,
+    KB_SCORE_THRESHOLD,
+    KB_TOP_K,
     KEYWORDS_FILE,
+    KEYWORDS_FILTER_ENABLED,
     LLM_RELEVANCE_SCORE_THRESHOLD,
     LLM_RELEVANCE_TOPIC,
     LOG_FILE,
@@ -22,6 +31,12 @@ from .config import (
     SEMANTIC_SCHOLAR_LIMIT,
     SLACK_BOT_TOKEN,
     SLACK_CHANNEL,
+    ZOTERO_API_BASE,
+    ZOTERO_API_KEY,
+    ZOTERO_CACHE_DIR,
+    ZOTERO_COLLECTION_KEYS,
+    ZOTERO_GROUP_ID,
+    ZOTERO_USER_ID,
 )
 from .slack import post_no_match_to_slack, post_test_to_slack, post_to_slack
 from .keywords import filter_papers_by_keywords, load_keyword_rules
@@ -172,16 +187,25 @@ def fetch_all_papers() -> list[Paper]:
 
 def apply_runtime_filters(papers: list[Paper], include_sent_papers: bool) -> list[Paper]:
     keyword_file_path = _resolve_runtime_path(KEYWORDS_FILE)
-    keyword_rules = load_keyword_rules(str(keyword_file_path))
-    if keyword_rules.has_rules():
-        before_keywords = len(papers)
-        papers = filter_papers_by_keywords(papers, keyword_rules)
-        print(
-            f"[paper-notifier] papers after keywords filter ({keyword_file_path}, {keyword_rules.keyword_count} keywords): "
-            f"{len(papers)} / {before_keywords}"
-        )
+    if KEYWORDS_FILTER_ENABLED:
+        keyword_rules = load_keyword_rules(str(keyword_file_path))
+        if keyword_rules.has_rules():
+            before_keywords = len(papers)
+            papers = filter_papers_by_keywords(papers, keyword_rules)
+            print(
+                f"[paper-notifier] papers after keywords filter ({keyword_file_path}, "
+                f"{keyword_rules.keyword_count} keywords): "
+                f"{len(papers)} / {before_keywords}"
+            )
+        else:
+            print(
+                f"[paper-notifier] keyword filter skipped (no rules found in {keyword_file_path})"
+            )
     else:
-        print(f"[paper-notifier] keyword filter skipped (no rules found in {keyword_file_path})")
+        print(
+            "[paper-notifier] keyword filter disabled via KEYWORDS_FILTER_ENABLED=false "
+            f"({keyword_file_path} ignored)"
+        )
 
     if include_sent_papers:
         print("[paper-notifier] sent-paper filter bypassed via --include-sent-papers")
@@ -196,6 +220,15 @@ def apply_runtime_filters(papers: list[Paper], include_sent_papers: bool) -> lis
             )
 
     before_relevance_filter = len(papers)
+    if KB_RELEVANCE_ENABLED:
+        papers = _apply_kb_relevance_filter(papers, before_relevance_filter)
+    else:
+        papers = _apply_llm_topic_relevance_filter(papers, before_relevance_filter)
+
+    return papers
+
+
+def _apply_llm_topic_relevance_filter(papers: list[Paper], before_relevance_filter: int) -> list[Paper]:
     try:
         papers, unresolved = filter_papers_by_llm_relevance(
             papers,
@@ -219,6 +252,36 @@ def apply_runtime_filters(papers: list[Paper], include_sent_papers: bool) -> lis
             )
     except RuntimeError as exc:
         print(f"[paper-notifier] LLM relevance filter failed: {exc}")
+        papers = filter_papers_by_research_field(papers, RESEARCH_FIELD_TERMS)
+        print(
+            "[paper-notifier] fallback term relevance filter "
+            f"({len(RESEARCH_FIELD_TERMS)} terms): {len(papers)} / {before_relevance_filter}"
+        )
+
+    return papers
+
+
+def _apply_kb_relevance_filter(papers: list[Paper], before_relevance_filter: int) -> list[Paper]:
+    try:
+        papers, unresolved = filter_papers_by_kb_relevance(
+            papers,
+            KB_SCORE_THRESHOLD,
+        )
+        print(
+            "[paper-notifier] papers after knowledge-base relevance filter "
+            f"(library + threshold={KB_SCORE_THRESHOLD:.2f}): "
+            f"{len(papers)} / {before_relevance_filter} "
+            f"(resolved={before_relevance_filter - len(unresolved)}, unresolved={len(unresolved)})"
+        )
+        if unresolved:
+            fallback_matched = filter_papers_by_research_field(unresolved, RESEARCH_FIELD_TERMS)
+            papers.extend(fallback_matched)
+            print(
+                "[paper-notifier] fallback term relevance filter "
+                f"({len(RESEARCH_FIELD_TERMS)} terms): {len(fallback_matched)} / {len(unresolved)}"
+            )
+    except Exception as exc:
+        print(f"[paper-notifier] knowledge-base relevance filter failed: {exc}")
         papers = filter_papers_by_research_field(papers, RESEARCH_FIELD_TERMS)
         print(
             "[paper-notifier] fallback term relevance filter "
@@ -279,6 +342,82 @@ def filter_papers_by_research_field(papers: list[Paper], field_terms: list[str])
         return papers
 
     return [paper for paper in papers if matches_research_field(paper, patterns)]
+
+
+def filter_papers_by_kb_relevance(
+    papers: list[Paper],
+    threshold: float,
+) -> tuple[list[Paper], list[Paper]]:
+    """Score each paper against the Zotero knowledge base using local models.
+
+    Papers whose best library match scores below ``threshold`` are dropped.
+    Papers that could not be scored at all are returned as ``unresolved`` so the
+    caller can fall back to term-based filtering.
+    """
+    if not papers:
+        return papers, []
+
+    from .kb_relevance import KnowledgeBaseIndex
+    from .zotero import sync_zotero_library
+
+    cache_dir = _resolve_runtime_path(ZOTERO_CACHE_DIR)
+    library = sync_zotero_library(
+        cache_dir,
+        api_key=ZOTERO_API_KEY,
+        user_id=ZOTERO_USER_ID,
+        group_id=ZOTERO_GROUP_ID,
+        api_base=ZOTERO_API_BASE,
+        collection_keys=ZOTERO_COLLECTION_KEYS,
+    )
+    print(
+        "[paper-notifier] Zotero library snapshot: "
+        f"{len(library.items)} items (version={library.version}, "
+        f"source={'cache' if library.from_cache else 'live'})"
+    )
+
+    index = KnowledgeBaseIndex(
+        library.items,
+        embedding_model=KB_EMBEDDING_MODEL,
+        use_reranker=KB_RERANKER_ENABLED,
+        reranker_model=KB_RERANKER_MODEL,
+        top_k=KB_TOP_K,
+        device=KB_DEVICE,
+        batch_size=KB_BATCH_SIZE,
+        cache_dir=cache_dir,
+    )
+
+    effective_threshold = max(0.0, min(1.0, threshold))
+    kept: list[Paper] = []
+    unresolved: list[Paper] = []
+    for paper in papers:
+        try:
+            matches = index.score_paper(paper)
+        except Exception as exc:
+            print(f"[paper-notifier] KB relevance scoring failed for '{paper.title}': {exc}")
+            unresolved.append(paper)
+            continue
+
+        if not matches:
+            print(f"[paper-notifier] KB relevance: no library matches for '{paper.title}'")
+            unresolved.append(paper)
+            continue
+
+        best = matches[0]
+        action = "keep" if best.score >= effective_threshold else "drop"
+        rerank_note = (
+            f" rerank={best.rerank_score:.2f}" if best.rerank_score is not None else ""
+        )
+        print(
+            "[paper-notifier] KB relevance "
+            f"score={best.score:.3f} (threshold={effective_threshold:.2f}){rerank_note} "
+            f"{action} top_match='{best.item.title}' | paper='{paper.title}'"
+        )
+        if best.score >= effective_threshold:
+            paper.kb_score = best.score
+            paper.kb_top_match = best.item.title
+            kept.append(paper)
+
+    return kept, unresolved
 
 
 def filter_papers_by_llm_relevance(

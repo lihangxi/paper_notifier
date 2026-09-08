@@ -6,11 +6,17 @@ from typing import Iterable
 
 import requests
 
-from .config import KEYWORD_LLM_ENABLED, SLACK_ICON_EMOJI, SLACK_USERNAME
+from .config import (
+    KB_SHOW_IN_SLACK,
+    KEYWORD_LLM_ENABLED,
+    SLACK_ICON_EMOJI,
+    SLACK_USERNAME,
+)
 from .llm_client import (
     get_active_model,
     get_active_provider_name,
     has_active_api_key,
+    is_exhaustion_message,
     post_chat_completions,
 )
 from .models import Paper
@@ -297,13 +303,14 @@ def _llm_concept_keywords(paper: Paper, max_items: int = 5) -> list[str]:
         return _parse_llm_concepts(content, max_items, source_tokens)
     except Exception as exc:
         error_text = str(exc)
-        if "status=401" in error_text or "status=403" in error_text:
-            _KEYWORD_LLM_DISABLED_REASON = error_text
-            print(
-                "[paper-notifier] "
-                f"{get_active_provider_name()} concept keyword generation disabled for this run "
-                f"after auth/permission error: {error_text}"
-            )
+        if is_exhaustion_message(error_text):
+            if not _KEYWORD_LLM_DISABLED_REASON:
+                _KEYWORD_LLM_DISABLED_REASON = error_text
+                print(
+                    "[paper-notifier] "
+                    f"{get_active_provider_name()} concept keyword generation disabled for this run "
+                    f"after quota/permission error: {error_text[:200]}"
+                )
             return []
         print(
             "[paper-notifier] "
@@ -343,6 +350,11 @@ def format_papers(papers: Iterable[Paper]) -> str:
         lines.append(f"*{idx}) {paper.title}*")
         lines.append(f"*Authors:* {authors}")
         lines.append(f"*Source:* {paper.source} | *Date:* {paper.published.date()}")
+        if KB_SHOW_IN_SLACK and paper.kb_score is not None:
+            match_title = (paper.kb_top_match or "N/A").replace("\n", " ").strip()
+            lines.append(
+                f"*Library match:* {match_title} *(score {paper.kb_score:.2f})*"
+            )
         lines.append(f"*Keywords:* {summarize_keywords_from_paper(paper)}")
         lines.append(f"*Summary:* {paper.summary or paper.abstract}")
         lines.append(f"*URL:* {paper.url}")

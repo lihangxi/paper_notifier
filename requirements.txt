@@ -3,3 +3,8 @@ feedparser==6.0.11
 openai==1.68.2
 python-dotenv==1.0.1
 requests==2.32.3
+
+# Optional: Zotero knowledge-base relevance (local open-source models).
+# Install with: pip install -e ".[kb]"
+# numpy
+# sentence-transformers

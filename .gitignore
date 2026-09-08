@@ -10,6 +10,9 @@ keywords.txt
 logs/
 *.log
 
+# Zotero knowledge-base cache (item snapshot + precomputed embeddings)
+kb_cache/
+
 # Python
 __pycache__/
 *.py[cod]

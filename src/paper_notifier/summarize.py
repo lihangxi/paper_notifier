@@ -9,10 +9,14 @@ from .llm_client import (
     get_active_model,
     get_active_provider_name,
     has_active_api_key,
+    is_exhaustion_message,
     post_chat_completions,
 )
 from .config import IMPACT_GENERATION_ENABLED, SUMMARY_LLM_ENABLED
 from .models import Paper
+
+
+_SUMMARY_LLM_DISABLED_REASON: str | None = None
 
 
 _LEADING_CLEANUP_PATTERNS: tuple[tuple[str, int], ...] = (
@@ -183,9 +187,13 @@ def _ensure_impact_sentence(summary: str, title: str, venue: str) -> str:
 
 
 def summarize_with_llm(paper: Paper, url_context: str) -> str:
+    global _SUMMARY_LLM_DISABLED_REASON
+
     if not SUMMARY_LLM_ENABLED:
         return ""
     if not has_active_api_key():
+        return ""
+    if _SUMMARY_LLM_DISABLED_REASON:
         return ""
 
     author_text = ", ".join(paper.authors[:8]) if paper.authors else "Unknown authors"
@@ -227,7 +235,17 @@ def summarize_with_llm(paper: Paper, url_context: str) -> str:
         content = (message.get("content") or "").strip()
         return _normalize_summary_text(content)
     except Exception as exc:
-        print(f"[paper-notifier] {get_active_provider_name()} summary generation failed: {exc}")
+        error_text = str(exc)
+        print(
+            f"[paper-notifier] {get_active_provider_name()} summary generation failed: {error_text}"
+        )
+        if is_exhaustion_message(error_text) and not _SUMMARY_LLM_DISABLED_REASON:
+            _SUMMARY_LLM_DISABLED_REASON = error_text
+            print(
+                "[paper-notifier] "
+                f"{get_active_provider_name()} summary generation disabled for this run "
+                f"(quota/permission exhaustion): {error_text[:200]}"
+            )
         return ""
 
 

@@ -28,6 +28,7 @@ RESEARCH_FIELD_TERMS = [
 	if term.strip()
 ]
 KEYWORDS_FILE = os.getenv("KEYWORDS_FILE", "keywords.txt").strip()
+KEYWORDS_FILTER_ENABLED = parse_bool(os.getenv("KEYWORDS_FILTER_ENABLED"), True)
 LOG_FILE = os.getenv("LOG_FILE", "logs/matched_papers.log").strip()
 SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY", "").strip()
 SEMANTIC_SCHOLAR_LIMIT = parse_int(os.getenv("SEMANTIC_SCHOLAR_LIMIT"), 20)
@@ -35,9 +36,15 @@ SEMANTIC_SCHOLAR_LIMIT = parse_int(os.getenv("SEMANTIC_SCHOLAR_LIMIT"), 20)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openrouter").strip().lower() or "openrouter"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "minimax/minimax-m3:free").strip() or "minimax/minimax-m3:free"
-DEEPSEEK_THINKING_ENABLED = parse_bool(os.getenv("DEEPSEEK_THINKING_ENABLED"), True)
-DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "high").strip().lower()
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "dots-studio/dots-3-note-preview:free").strip() or "dots-studio/dots-3-note-preview:free"
+DEEPSEEK_THINKING_ENABLED = parse_bool(os.getenv("DEEPSEEK_THINKING_ENABLED"), False)
+DEEPSEEK_REASONING_EFFORT = os.getenv("DEEPSEEK_REASONING_EFFORT", "").strip().lower()
+# Official DeepSeek platform (OpenAI-compatible) provider settings.
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+DEEPSEEK_BASE_URL = os.getenv(
+	"DEEPSEEK_BASE_URL", "https://api.deepseek.com"
+).strip() or "https://api.deepseek.com"
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
 OPENROUTER_TIMEOUT_SECONDS = parse_int(os.getenv("OPENROUTER_TIMEOUT_SECONDS"), 25)
 OPENROUTER_RETRY_LIMIT = parse_int(os.getenv("OPENROUTER_RETRY_LIMIT"), 10)
 OPENROUTER_RETRY_INTERVAL_SECONDS = parse_int(os.getenv("OPENROUTER_RETRY_INTERVAL_SECONDS"), 60)
@@ -55,3 +62,34 @@ RSS_FEEDS = [
 	for feed in os.getenv("RSS_FEEDS", "").split(",")
 	if feed.strip()
 ]
+
+# Knowledge-base relevance (Zotero library). When KB_RELEVANCE_ENABLED is true,
+# paper relevance is scored against the user's Zotero library instead of the
+# single-topic LLM prompt. All KB models are open-source and run locally.
+KB_RELEVANCE_ENABLED = parse_bool(os.getenv("KB_RELEVANCE_ENABLED"), False)
+
+ZOTERO_API_KEY = os.getenv("ZOTERO_API_KEY", "").strip()
+ZOTERO_USER_ID = os.getenv("ZOTERO_USER_ID", "").strip()
+ZOTERO_GROUP_ID = os.getenv("ZOTERO_GROUP_ID", "").strip()
+ZOTERO_API_BASE = os.getenv(
+	"ZOTERO_API_BASE", "https://api.zotero.org"
+).strip() or "https://api.zotero.org"
+ZOTERO_COLLECTION_KEYS = [
+	key.strip()
+	for key in os.getenv("ZOTERO_COLLECTION_KEYS", "").split(",")
+	if key.strip()
+]
+ZOTERO_CACHE_DIR = os.getenv("ZOTERO_CACHE_DIR", "kb_cache").strip() or "kb_cache"
+
+KB_EMBEDDING_MODEL = os.getenv(
+	"KB_EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5"
+).strip() or "BAAI/bge-base-en-v1.5"
+KB_RERANKER_MODEL = os.getenv(
+	"KB_RERANKER_MODEL", "BAAI/bge-reranker-base"
+).strip() or "BAAI/bge-reranker-base"
+KB_RERANKER_ENABLED = parse_bool(os.getenv("KB_RERANKER_ENABLED"), False)
+KB_TOP_K = parse_int(os.getenv("KB_TOP_K"), 20)
+KB_SCORE_THRESHOLD = parse_float(os.getenv("KB_SCORE_THRESHOLD"), 0.75)
+KB_DEVICE = os.getenv("KB_DEVICE", "").strip().lower()
+KB_BATCH_SIZE = parse_int(os.getenv("KB_BATCH_SIZE"), 32)
+KB_SHOW_IN_SLACK = parse_bool(os.getenv("KB_SHOW_IN_SLACK"), True)
