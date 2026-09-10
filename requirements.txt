@@ -1,10 +1,12 @@
+# Core dependencies for the standard paper notifier installation.
+# The Zotero knowledge-base feature is intentionally not installed here.
 apscheduler==3.10.4
 feedparser==6.0.11
 openai==1.68.2
 python-dotenv==1.0.1
 requests==2.32.3
 
-# Optional: Zotero knowledge-base relevance (local open-source models).
-# Install with: pip install -e ".[kb]"
-# numpy
-# sentence-transformers
+# Optional: Zotero knowledge-base relevance and its support packages
+# (numpy, sentence-transformers, torch, scipy, scikit-learn, and transformers).
+# Install the optional extra separately when KB relevance is needed:
+#   pip install -e ".[kb]"
