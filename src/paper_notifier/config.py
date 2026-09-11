@@ -84,6 +84,9 @@ ZOTERO_CACHE_DIR = os.getenv("ZOTERO_CACHE_DIR", "kb_cache").strip() or "kb_cach
 KB_EMBEDDING_MODEL = os.getenv(
 	"KB_EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5"
 ).strip() or "BAAI/bge-base-en-v1.5"
+# Optional sentence-transformers prompt name applied to the paper (query) side,
+# e.g. "query" for Qwen3-Embedding models. Leave empty for BGE models.
+KB_QUERY_PROMPT = os.getenv("KB_QUERY_PROMPT", "").strip()
 KB_RERANKER_MODEL = os.getenv(
 	"KB_RERANKER_MODEL", "BAAI/bge-reranker-base"
 ).strip() or "BAAI/bge-reranker-base"
@@ -93,3 +96,9 @@ KB_SCORE_THRESHOLD = parse_float(os.getenv("KB_SCORE_THRESHOLD"), 0.75)
 KB_DEVICE = os.getenv("KB_DEVICE", "").strip().lower()
 KB_BATCH_SIZE = parse_int(os.getenv("KB_BATCH_SIZE"), 32)
 KB_SHOW_IN_SLACK = parse_bool(os.getenv("KB_SHOW_IN_SLACK"), True)
+# Hugging Face cache handling for the local KB models. KB_HF_HOME optionally
+# relocates the cache (e.g. kb_cache/hf) so models live inside the project;
+# KB_LOCAL_FILES_ONLY loads them strictly from the local cache with all
+# Hugging Face network access disabled (use --fetch-kb-models to populate).
+KB_HF_HOME = os.getenv("KB_HF_HOME", "").strip()
+KB_LOCAL_FILES_ONLY = parse_bool(os.getenv("KB_LOCAL_FILES_ONLY"), False)

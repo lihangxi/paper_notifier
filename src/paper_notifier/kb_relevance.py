@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,8 +17,30 @@ _INSTALL_HINT = (
     "Knowledge-base relevance requires the optional 'kb' dependencies. "
     "Install them with:  pip install -e \".[kb]\"  "
     "(adds sentence-transformers, torch, numpy). "
-    "Models are downloaded from Hugging Face on first use."
+    "Models are downloaded from Hugging Face on first use "
+    "(or prefetch once with: python -m paper_notifier.cli --fetch-kb-models)."
 )
+
+
+def _apply_hf_env(*, hf_home: str = "", local_files_only: bool = False) -> None:
+    """Configure Hugging Face caching/offline mode before heavy imports.
+
+    ``sentence_transformers`` pulls in ``huggingface_hub``/``transformers``,
+    which read these environment variables at import time, so this must run
+    before any of them is imported (all imports here are lazy for that reason).
+    """
+    if hf_home:
+        os.environ["HF_HOME"] = str(Path(hf_home).expanduser())
+    if local_files_only:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
+
+def _supports_local_files_only(cls) -> bool:
+    try:
+        return "local_files_only" in inspect.signature(cls.__init__).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _pick_device(device: str) -> str:
@@ -33,20 +57,64 @@ def _pick_device(device: str) -> str:
     return requested
 
 
-def _load_sentence_transformer(model_name: str, device: str):
+def _load_sentence_transformer(
+    model_name: str, device: str, local_files_only: bool = False
+):
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError as exc:
         raise RuntimeError(_INSTALL_HINT) from exc
-    return SentenceTransformer(model_name, device=device)
+
+    kwargs: dict = {"device": device}
+    if local_files_only and _supports_local_files_only(SentenceTransformer):
+        kwargs["local_files_only"] = True
+    # Even without the kwarg (older versions) the HF_HUB_OFFLINE env var set by
+    # _apply_hf_env keeps loading strictly local.
+    return SentenceTransformer(model_name, **kwargs)
 
 
-def _load_cross_encoder(model_name: str, device: str):
+def _load_cross_encoder(
+    model_name: str, device: str, local_files_only: bool = False
+):
     try:
         from sentence_transformers import CrossEncoder
     except ImportError as exc:
         raise RuntimeError(_INSTALL_HINT) from exc
-    return CrossEncoder(model_name, device=device)
+
+    kwargs: dict = {"device": device}
+    if local_files_only and _supports_local_files_only(CrossEncoder):
+        kwargs["local_files_only"] = True
+    return CrossEncoder(model_name, **kwargs)
+
+
+def download_kb_models(
+    *,
+    embedding_model: str,
+    reranker_model: str | None = None,
+    device: str = "",
+    hf_home: str = "",
+) -> str:
+    """Download the configured KB models once into the local HF cache.
+
+    Used by ``python -m paper_notifier.cli --fetch-kb-models``. Returns the
+    resolved Hugging Face hub cache directory.
+    """
+    _apply_hf_env(hf_home=hf_home, local_files_only=False)
+    resolved_device = _pick_device(device)
+    _load_sentence_transformer(embedding_model, resolved_device)
+    if reranker_model:
+        _load_cross_encoder(reranker_model, resolved_device)
+
+    try:
+        from huggingface_hub import constants as hf_constants
+
+        cache = getattr(hf_constants, "HF_HUB_CACHE", "")
+        if cache:
+            return str(cache)
+    except Exception:
+        pass
+    root = os.environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface")
+    return str(Path(root) / "hub")
 
 
 def _to_float_array(embeddings):
@@ -57,15 +125,23 @@ def _to_float_array(embeddings):
     return np.asarray(embeddings, dtype=np.float32)
 
 
-def _encode(model, texts: Sequence[str], batch_size: int) -> np.ndarray:
+def _encode(
+    model,
+    texts: Sequence[str],
+    batch_size: int,
+    prompt_name: str | None = None,
+) -> np.ndarray:
+    kwargs: dict = {
+        "batch_size": batch_size,
+        "normalize_embeddings": True,
+        "show_progress_bar": False,
+    }
+    if prompt_name:
+        kwargs["prompt_name"] = prompt_name
     try:
-        embeddings = model.encode(
-            list(texts),
-            batch_size=batch_size,
-            normalize_embeddings=True,
-            show_progress_bar=False,
-        )
+        embeddings = model.encode(list(texts), **kwargs)
     except TypeError:
+        # Older sentence-transformers without prompt_name support.
         embeddings = model.encode(list(texts), batch_size=batch_size)
     return _to_float_array(embeddings)
 
@@ -145,22 +221,33 @@ class KnowledgeBaseIndex:
         device: str = "",
         batch_size: int = 32,
         cache_dir: Path | None = None,
+        local_files_only: bool = False,
+        hf_home: str = "",
+        query_prompt: str = "",
     ) -> None:
         self.items = list(items)
         if not self.items:
             raise RuntimeError("No Zotero library items to index")
 
+        # Must happen before sentence_transformers is imported (lazy loaders).
+        _apply_hf_env(hf_home=hf_home, local_files_only=local_files_only)
+
         self.top_k = max(1, int(top_k))
         self.batch_size = max(1, int(batch_size))
         self.device = _pick_device(device)
         self.embedding_model = embedding_model
+        self.query_prompt = (query_prompt or "").strip()
 
-        self.embedder = _load_sentence_transformer(embedding_model, self.device)
+        self.embedder = _load_sentence_transformer(
+            embedding_model, self.device, local_files_only
+        )
         self.reranker = None
         if use_reranker:
             if not reranker_model:
                 raise RuntimeError("KB_RERANKER_MODEL is required when KB_RERANKER_ENABLED=true")
-            self.reranker = _load_cross_encoder(reranker_model, self.device)
+            self.reranker = _load_cross_encoder(
+                reranker_model, self.device, local_files_only
+            )
 
         self._vectors = self._embed_library(
             cache_dir=Path(cache_dir) if cache_dir else None,
@@ -237,7 +324,9 @@ class KnowledgeBaseIndex:
         if not query:
             return []
 
-        query_vector = _encode(self.embedder, [query], self.batch_size)[0]
+        query_vector = _encode(
+            self.embedder, [query], self.batch_size, self.query_prompt or None
+        )[0]
         similarities = self._vectors @ query_vector  # both are L2-normalized
 
         k = min(self.top_k, len(self.items))
@@ -275,5 +364,6 @@ class KnowledgeBaseIndex:
 __all__ = [
     "KnowledgeBaseIndex",
     "ScoredMatch",
+    "download_kb_models",
     "paper_text_for_embedding",
 ]

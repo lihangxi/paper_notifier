@@ -68,7 +68,8 @@ By default relevance is scored by an LLM prompt against the single `LLM_RELEVANC
    pip install -e ".[kb]"
    ```
 
-   On first use the models are downloaded from Hugging Face and cached.
+   On first use the models are downloaded from Hugging Face and cached (see
+   "Offline model use" below to fetch once and avoid any network access later).
 
 2. Set up Zotero access in `.env`:
 
@@ -103,6 +104,38 @@ By default relevance is scored by an LLM prompt against the single `LLM_RELEVANC
 How it works: on each run the Zotero library snapshot is synchronized via the API (cached; unchanged libraries are served from `kb_cache/` using conditional requests). Embeddings are stored per library item together with each item's Zotero version, so when your library changes only **new/changed items are re-embedded** — unchanged items are reused from cache. A paper's relevance is its **maximum embedding-cosine similarity** to any library item (embeddings are L2-normalized, so this is a stable 0–1 score). The paper is kept when that best match reaches `KB_SCORE_THRESHOLD` (default 0.75; from real-run calibration relevant papers score ~0.75–0.85 while unrelated news/biology score below ~0.70). An optional cross-encoder reranker (`KB_RERANKER_ENABLED=true`) adds an informational rerank score to each match but does not drive the decision, because its sigmoid scores are uncalibrated for absolute gating. With `KB_SHOW_IN_SLACK=true`, each posted paper includes a `Library match:` line showing its best-matching library item and cosine score. Per-paper scores are also printed to the log so you can tune the threshold.
 
 When KB mode is enabled, the LLM topic relevance filter is bypassed. If the KB pipeline fails (for example the models are not installed or Zotero cannot be reached), the app falls back to `RESEARCH_FIELD_TERMS` term filtering and prints the reason.
+
+### Offline model use (no re-downloads)
+
+The embedding/reranker weights are cached by Hugging Face after the first download. To avoid **any** Hugging Face network access on each run (slow metadata checks, blocked networks, or accidental re-downloads when the user cache is cleared), prefetch once and then run strictly offline:
+
+1. Download the configured models once (already-cached models are skipped):
+
+   ```bash
+   python -m paper_notifier.cli --fetch-kb-models
+   ```
+
+   This prints the resolved cache directory. By default it is the user-level Hugging Face cache (`~/.cache/huggingface/hub`). To keep the models inside the project instead (easy to back up or copy to another machine), set:
+
+   ```dotenv
+   KB_HF_HOME=kb_cache/hf
+   ```
+
+   and run the fetch command again (or copy the existing cache folder there).
+
+2. Disable Hugging Face network access for normal runs:
+
+   ```dotenv
+   KB_LOCAL_FILES_ONLY=true
+   ```
+
+   With this on, the models are loaded strictly from the local cache (`HF_HUB_OFFLINE=1` / `local_files_only`). If a model is missing, the KB step fails fast with a clear message instead of downloading, and the app falls back to `RESEARCH_FIELD_TERMS` term filtering.
+
+You can also point `KB_EMBEDDING_MODEL` / `KB_RERANKER_MODEL` directly at a local model directory (a folder downloaded from Hugging Face works as-is, no config needed beyond the path).
+
+### Benchmarking embedding models on your own data
+
+`scripts/benchmark_kb_models.py` scores the same candidate papers against your own Zotero library with several embedding models and reports separation metrics (AUC, score distributions, suggested thresholds, CPU timing) for each. It fetches a fresh paper pool, builds positives from the sent-paper log (`logs/matched_papers.log`, with abstracts pulled from arXiv/Crossref) plus author-whitelist matches, and caches library vectors per model (checkpointed, resumable). See the script docstring for the `fetch` / `positives` / `download` / `score` workflow.
 
 ## Run
 

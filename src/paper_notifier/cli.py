@@ -13,9 +13,12 @@ from .config import (
     KB_BATCH_SIZE,
     KB_DEVICE,
     KB_EMBEDDING_MODEL,
+    KB_HF_HOME,
+    KB_LOCAL_FILES_ONLY,
     KB_RERANKER_ENABLED,
     KB_RERANKER_MODEL,
     KB_RELEVANCE_ENABLED,
+    KB_QUERY_PROMPT,
     KB_SCORE_THRESHOLD,
     KB_TOP_K,
     KEYWORDS_FILE,
@@ -333,6 +336,39 @@ def run_test_slack() -> None:
     print("[paper-notifier] slack test post completed")
 
 
+def run_fetch_kb_models() -> None:
+    """One-time download of the configured KB models into the local HF cache."""
+    from .kb_relevance import download_kb_models
+
+    hf_home = str(_resolve_runtime_path(KB_HF_HOME)) if KB_HF_HOME else ""
+    reranker_model = KB_RERANKER_MODEL if KB_RERANKER_ENABLED else None
+    reranker_note = (
+        f"reranker={reranker_model}"
+        if reranker_model
+        else "reranker=skipped (KB_RERANKER_ENABLED=false)"
+    )
+    print(
+        "[paper-notifier] fetching KB models "
+        f"(embedding={KB_EMBEDDING_MODEL}, {reranker_note}, "
+        f"cache={hf_home or 'default Hugging Face cache'})"
+    )
+    try:
+        cache_path = download_kb_models(
+            embedding_model=KB_EMBEDDING_MODEL,
+            reranker_model=reranker_model,
+            device=KB_DEVICE,
+            hf_home=hf_home,
+        )
+    except Exception as exc:
+        raise SystemExit(f"[paper-notifier] KB model download failed: {exc}") from exc
+
+    print(f"[paper-notifier] KB models are cached in: {cache_path}")
+    print(
+        "[paper-notifier] set KB_LOCAL_FILES_ONLY=true in .env to load models "
+        "strictly from the local cache (no Hugging Face network access on each run)"
+    )
+
+
 def filter_papers_by_research_field(papers: list[Paper], field_terms: list[str]) -> list[Paper]:
     if not field_terms:
         return papers
@@ -384,6 +420,9 @@ def filter_papers_by_kb_relevance(
         device=KB_DEVICE,
         batch_size=KB_BATCH_SIZE,
         cache_dir=cache_dir,
+        local_files_only=KB_LOCAL_FILES_ONLY,
+        hf_home=str(_resolve_runtime_path(KB_HF_HOME)) if KB_HF_HOME else "",
+        query_prompt=KB_QUERY_PROMPT,
     )
 
     effective_threshold = max(0.0, min(1.0, threshold))
@@ -655,6 +694,11 @@ def main() -> None:
     parser.add_argument("--schedule", action="store_true", help="run daily on schedule")
     parser.add_argument("--test", action="store_true", help="send one Slack test message and exit")
     parser.add_argument(
+        "--fetch-kb-models",
+        action="store_true",
+        help="download the configured knowledge-base models once and exit",
+    )
+    parser.add_argument(
         "--include-sent-papers",
         action="store_true",
         help="bypass matched_papers.log dedup filter and include papers sent before",
@@ -663,6 +707,8 @@ def main() -> None:
 
     if args.test:
         run_test_slack()
+    elif args.fetch_kb_models:
+        run_fetch_kb_models()
     elif args.schedule:
         schedule_daily(lambda: run_once(include_sent_papers=args.include_sent_papers))
     else:
