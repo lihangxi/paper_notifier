@@ -157,9 +157,37 @@ Run on schedule (daily at configured time):
 python -m paper_notifier.cli --schedule
 ```
 
-When schedule mode starts, the app prints scheduler status and the next run time.
+When schedule mode starts, the app prints scheduler status and the next run time. Only one scheduler can run at a time; starting a second one exits immediately with an "already running" message so you never get duplicate posts.
 
 On Windows you can double-click `run_scheduler.bat` to start the scheduler in a console window (it keeps running and shows logs; close the window to stop).
+
+### Run in the background (Windows)
+
+To keep the scheduler running hidden on your computer, with no console window, use `scheduler_control.vbs`. Double-click it for a menu:
+
+1. Start scheduler in the background
+2. Stop scheduler
+3. Status (running state, autostart state, last log lines)
+4. Enable autostart at logon
+5. Disable autostart at logon
+0. Exit
+
+The same actions are available as command-line arguments, for scripts and shortcuts:
+
+```bat
+wscript scheduler_control.vbs start
+wscript scheduler_control.vbs stop
+wscript scheduler_control.vbs status
+wscript scheduler_control.vbs autostart-on
+wscript scheduler_control.vbs autostart-off
+```
+
+How the background mode works:
+
+- `scheduler_control.vbs` checks the virtual environment, then launches `run_scheduler_background.bat` with a hidden window (`wscript` itself shows no console).
+- `run_scheduler_background.bat` runs `python -m paper_notifier.cli --schedule` and appends all output to `logs/scheduler.log`, so you can always inspect what it did (stop the scheduler before deleting that log, since the file is held open while it runs).
+- Autostart uses a shortcut named `paper-notifier scheduler.lnk` in your Startup folder; it can also be removed from Task Manager → Startup apps. If you move the project folder, re-run `autostart-on` to refresh the shortcut.
+- Stop either from the menu, with `wscript scheduler_control.vbs stop`, or by ending the process in Task Manager.
 
 Send one Slack test message to verify your token and channel:
 

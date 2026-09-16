@@ -7,6 +7,7 @@ echo ============================================
 echo  paper-notifier daily scheduler
 echo  Timezone : see .env (TIMEZONE)
 echo  Run time : see .env (RUN_TIME)
+echo  Background : see scheduler_control.vbs
 echo ============================================
 echo.
 
@@ -19,6 +20,7 @@ if not exist ".venv\Scripts\python.exe" (
 
 echo [paper-notifier] Starting scheduler... (keep this window open)
 echo.
+set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
 ".venv\Scripts\python.exe" -m paper_notifier.cli --schedule
 set EXIT_CODE=%errorlevel%
 
