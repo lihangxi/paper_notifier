@@ -12,6 +12,9 @@ SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
 SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "").strip()
 SLACK_USERNAME = os.getenv("SLACK_USERNAME", "").strip()
 SLACK_ICON_EMOJI = os.getenv("SLACK_ICON_EMOJI", "").strip()
+# Post each paper as its own Slack message instead of one combined message
+# (individual messages can be pinned or reacted to in Slack).
+SLACK_ONE_MESSAGE_PER_PAPER = parse_bool(os.getenv("SLACK_ONE_MESSAGE_PER_PAPER"), False)
 QUERY = os.getenv("QUERY", "quantum computing").strip()
 MAX_PAPERS = parse_int(os.getenv("MAX_PAPERS"), 8)
 DAYS_BACK = parse_int(os.getenv("DAYS_BACK"), 1)

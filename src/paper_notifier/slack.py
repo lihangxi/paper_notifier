@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Iterable
 
 import requests
@@ -10,6 +11,7 @@ from .config import (
     KB_SHOW_IN_SLACK,
     KEYWORD_LLM_ENABLED,
     SLACK_ICON_EMOJI,
+    SLACK_ONE_MESSAGE_PER_PAPER,
     SLACK_USERNAME,
 )
 from .llm_client import (
@@ -338,26 +340,34 @@ def summarize_keywords_from_paper(paper: Paper, top_n: int = 5) -> str:
     return result
 
 
+def _format_paper_block(index: int, paper: Paper) -> list[str]:
+    authors = ", ".join(paper.authors[:5])
+    if len(paper.authors) > 5:
+        authors += ", et al."
+
+    lines = [
+        f"*{index}) {paper.title}*",
+        f"*Authors:* {authors}",
+        f"*Source:* {paper.source} | *Date:* {paper.published.date()}",
+    ]
+    if KB_SHOW_IN_SLACK and paper.kb_score is not None:
+        match_title = (paper.kb_top_match or "N/A").replace("\n", " ").strip()
+        lines.append(
+            f"*Library match:* {match_title} *(score {paper.kb_score:.2f})*"
+        )
+    lines.append(f"*Keywords:* {summarize_keywords_from_paper(paper)}")
+    lines.append(f"*Summary:* {paper.summary or paper.abstract}")
+    lines.append(f"*URL:* {paper.url}")
+    return lines
+
+
 def format_papers(papers: Iterable[Paper]) -> str:
     paper_list = list(papers)
     lines = [f"*Today's paper count: ({len(paper_list)})*\n"]
     for idx, paper in enumerate(paper_list, start=1):
-        authors = ", ".join(paper.authors[:5])
-        if len(paper.authors) > 5:
-            authors += ", et al."
         if idx > 1:
             lines.append("")
-        lines.append(f"*{idx}) {paper.title}*")
-        lines.append(f"*Authors:* {authors}")
-        lines.append(f"*Source:* {paper.source} | *Date:* {paper.published.date()}")
-        if KB_SHOW_IN_SLACK and paper.kb_score is not None:
-            match_title = (paper.kb_top_match or "N/A").replace("\n", " ").strip()
-            lines.append(
-                f"*Library match:* {match_title} *(score {paper.kb_score:.2f})*"
-            )
-        lines.append(f"*Keywords:* {summarize_keywords_from_paper(paper)}")
-        lines.append(f"*Summary:* {paper.summary or paper.abstract}")
-        lines.append(f"*URL:* {paper.url}")
+        lines.extend(_format_paper_block(idx, paper))
     return "\n".join(lines)
 
 
@@ -385,8 +395,16 @@ def _split_messages(text: str) -> list[str]:
     return messages
 
 
+# chat.postMessage is rate limited to roughly one message per second per channel.
+_PER_MESSAGE_PAUSE_SECONDS = 1.1
+
+
 def post_to_slack(token: str, channel: str, papers: Iterable[Paper]) -> None:
     paper_list = list(papers)
+    if SLACK_ONE_MESSAGE_PER_PAPER:
+        _post_one_message_per_paper(token, channel, paper_list)
+        return
+
     text = format_papers(paper_list)
     messages = _split_messages(text)
     for message in messages:
@@ -395,6 +413,27 @@ def post_to_slack(token: str, channel: str, papers: Iterable[Paper]) -> None:
     print(
         "[paper-notifier] Slack post completed "
         f"channel={channel} count={len(paper_list)} messages={len(messages)}"
+    )
+
+
+def _post_one_message_per_paper(token: str, channel: str, paper_list: list[Paper]) -> None:
+    """Post a header plus one Slack message per paper so each can be pinned."""
+    messages: list[str] = [f"*Today's paper count: ({len(paper_list)})*"]
+    for idx, paper in enumerate(paper_list, start=1):
+        messages.extend(_split_messages("\n".join(_format_paper_block(idx, paper))))
+
+    posted = 0
+    for position, message in enumerate(messages):
+        if position > 0:
+            time.sleep(_PER_MESSAGE_PAUSE_SECONDS)
+        response = _post_chat_message(token, channel, message)
+        _log_slack_response("Slack response", response)
+        posted += 1
+
+    print(
+        "[paper-notifier] Slack post completed "
+        f"channel={channel} count={len(paper_list)} messages={posted} "
+        "mode=one-message-per-paper"
     )
 
 

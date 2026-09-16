@@ -220,7 +220,7 @@ python -m paper_notifier.cli --test
 - If `KEYWORD_LLM_ENABLED=true` and the provider API key is available, each paper includes concept-level `Keywords` generated from title and abstract.
 - If `IMPACT_GENERATION_ENABLED=true`, the summary ends with one sentence prefixed with `Impact:`; if false, no `Impact:` sentence is generated.
 - For DeepSeek models, thinking mode is sent as `extra_body.thinking.type` and effort is sent as `reasoning_effort` (`high`/`max`).
-- Slack messages use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries), do not show URL preview cards, and are split across multiple posts only when they would exceed Slack's message size limit.
+- Slack messages use a single `Summary` entry per paper (no separate `Abstract` or `Impact` entries), do not show URL preview cards, and are split across multiple posts only when they would exceed Slack's message size limit. Set `SLACK_ONE_MESSAGE_PER_PAPER=true` to post a `Today's paper count` header followed by **one message per paper** (handy when you want to pin or react to individual papers).
 - LLM requests retry automatically on HTTP `429` up to `OPENROUTER_RETRY_LIMIT` attempts with `OPENROUTER_RETRY_INTERVAL_SECONDS` pause between attempts.
 - Abstract text is cleaned to remove common metadata prefixes (for example `Published online` and leading DOI strings).
 - On summary LLM failure (or if disabled), the notifier falls back to abstract-based summary content.
